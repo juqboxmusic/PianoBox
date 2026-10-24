@@ -115,6 +115,7 @@ const DEFAULTS = {
   keyPc: 0, progId: 'pop', step: 0, arpPattern: 'up', arpSpan: 1,
   sound: 'grand', volume: 0.8, octave: 3, labels: 'all', colorMode: 'tone',
   voicing: 'smooth', autoAdvance: true, tempo: 96, hidePanel: false, sustain: false,
+  auto: false, autoKey: 0, autoMinor: false, autoSize: 3,
 };
 const PREFS = ['volume', 'octave', 'labels', 'colorMode', 'voicing', 'autoAdvance', 'tempo'];
 const STORE_KEY = 'pianobox.prefs.v3';
@@ -557,9 +558,15 @@ function renderKeys() {
     G.arp.forEach((v) => { if (!show.has(v.midi)) show.set(v.midi, { t: v.t, faint: true }); });
     const nx = G.arp[G.arpIdx];
     if (nx && !G.solved) show.set(nx.midi, { t: nx.t, next: true });
+  } else {
+    for (const a of autoHeld.values()) a.voicing.forEach((v) => show.set(v.midi, { t: v.t }));
   }
+  const scaleOn = S.mode === 'free' && S.auto;
   for (const [m, el] of Object.entries(keyEls)) {
     const s = show.get(+m);
+    const deg = scaleOn ? autoDegree(+m % 12) : -1;
+    el.classList.toggle('inscale', deg >= 0);
+    el.classList.toggle('tonic', deg === 0);
     el.classList.toggle('lit', !!s);
     el.classList.toggle('faint', !!(s && s.faint));
     el.classList.toggle('next', !!(s && s.next));
@@ -615,11 +622,14 @@ function renderDisplay() {
   const nm = $('#dName'), nu = $('#dNumeral'), tn = $('#dTones'), st = $('#dStatus'), sk = $('#dStreak');
   const hn = $('#hudName'), hnu = $('#hudNumeral'), hst = $('#hudStatus');
   if (S.mode === 'free') {
+    const autos = [...autoHeld.values()];
+    const last = autos[autos.length - 1];
     const hm = heldMidis();
-    const name = detectChord(hm);
-    $('#fName').textContent = name;
-    $('#fNotes').textContent = [...new Set(hm.map((m) => rootName(m % 12)))].join(' · ');
-    hn.textContent = name || '—'; hnu.textContent = ''; hst.textContent = '';
+    const name = last ? last.ch.name : detectChord(hm);
+    $('#fName').innerHTML = last ? `<span class="numeral">${last.ch.numeral}</span> ${name}` : name;
+    $('#fNotes').textContent = last ? last.ch.tones.map((t) => t.name).join(' · ')
+      : [...new Set(hm.map((m) => rootName(m % 12)))].join(' · ');
+    hn.textContent = name || '—'; hnu.textContent = last ? last.ch.numeral : ''; hst.textContent = '';
     return;
   }
   const ch = G.chord;
@@ -680,9 +690,10 @@ function success() {
   }
 }
 
-function guidePress(m, src) {
+function guidePress(m, src, auto) {
   if (S.mode === 'free') {
-    flash(m, true, RAINBOW[m % 12]);
+    if (auto) { auto.voicing.forEach((v) => flash(v.midi, true, v.t.color)); renderKeys(); renderAuto(); }
+    else flash(m, true, RAINBOW[m % 12]);
     renderDisplay();
     return;
   }
@@ -715,10 +726,15 @@ function guideRelease() {
 }
 
 function press(m, src, vel = 0.8, audioMidi = m) {
-  AudioEng.noteOn(audioMidi, vel);
+  const again = held.has(m);
+  const auto = again ? autoHeld.get(m) : autoChordFor(m);
+  if (auto) {
+    if (!again) autoHeld.set(m, auto);
+    auto.voicing.forEach((v) => (again ? AudioEng.noteOn(v.midi, vel) : chordNoteOn(v.midi, vel)));
+  } else AudioEng.noteOn(audioMidi, vel);
   held.set(m, (held.get(m) || 0) + 1);
   keyEls[m]?.classList.add('down');
-  guidePress(m, src);
+  guidePress(m, src, auto);
 }
 
 function release(m, audioMidi = m) {
@@ -726,7 +742,13 @@ function release(m, audioMidi = m) {
   if (c > 0) { held.set(m, c); return; }
   if (!held.has(m)) return;
   held.delete(m);
-  AudioEng.noteOff(audioMidi);
+  const auto = autoHeld.get(m);
+  if (auto) {
+    autoHeld.delete(m);
+    auto.voicing.forEach((v) => chordNoteOff(v.midi));
+    renderKeys();
+    renderAuto();
+  } else if (!sounding.has(audioMidi)) AudioEng.noteOff(audioMidi);
   keyEls[m]?.classList.remove('down');
   guideRelease();
 }
@@ -734,6 +756,107 @@ function release(m, audioMidi = m) {
 function releaseAll() {
   pointers.clear();
   for (const m of [...held.keys()]) { held.set(m, 1); release(m); }
+  sounding.clear();
+}
+
+/* ======================= Auto Chords (free play) ======================= */
+// Each key in the chosen scale plays the chord built on that scale degree.
+const SCALES = { major: [0, 2, 4, 5, 7, 9, 11], minor: [0, 2, 3, 5, 7, 8, 10] };
+const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+const autoHeld = new Map();   // trigger key -> { ch, voicing, d }
+const sounding = new Map();   // midi -> how many held auto chords contain it
+
+const autoScale = () => SCALES[S.autoMinor ? 'minor' : 'major'];
+const autoDegree = (pc) => autoScale().indexOf((pc - S.autoKey + 12) % 12);
+
+function numeral(d, qid) {
+  const lower = ['min', 'dim', 'm7', 'm7b5', 'dim7'].includes(qid);
+  const sfx = { dim: '°', aug: '+', maj7: 'maj7', 7: '7', m7: '7', m7b5: 'ø7', dim7: '°7' }[qid] || '';
+  return (lower ? ROMAN[d].toLowerCase() : ROMAN[d]) + sfx;
+}
+
+// Stack thirds from the scale: degree d, d+2, d+4 (and d+6 for 7ths)
+function diatonic(d) {
+  const sc = autoScale();
+  const semis = [];
+  for (let k = 0; k < S.autoSize; k++) { const i = d + 2 * k; semis.push(sc[i % 7] + 12 * Math.floor(i / 7) - sc[d]); }
+  const q = QUALS.find((x) => x.iv.length === semis.length && x.iv.every(([s], i) => s === semis[i]));
+  const [kpc, kl] = (S.autoMinor ? MINOR_KEYS : ROOTS)[S.autoKey];
+  const ch = makeChord((kpc + sc[d]) % 12, (kl + d) % 7, q.id);
+  ch.numeral = numeral(d, q.id);
+  return ch;
+}
+
+function autoChordFor(m) {
+  if (S.mode !== 'free' || !S.auto) return null;
+  const d = autoDegree(m % 12);
+  if (d < 0) return null; // keys outside the scale play a single note
+  const ch = diatonic(d);
+  const [lo, hi] = range();
+  // Built upward from the pressed key; notes past the top of the keyboard fold down an octave
+  const voicing = ch.tones.map((t) => {
+    let n = m + t.semi;
+    while (n > hi && n - 12 >= lo) n -= 12;
+    return { midi: n, t };
+  }).sort(byMidi);
+  return { ch, voicing, d };
+}
+
+function chordNoteOn(n, vel) {
+  sounding.set(n, (sounding.get(n) || 0) + 1);
+  AudioEng.noteOn(n, vel);
+}
+function chordNoteOff(n) {
+  const c = (sounding.get(n) || 1) - 1;
+  if (c > 0) { sounding.set(n, c); return; }
+  sounding.delete(n);
+  if (!(held.has(n) && !autoHeld.has(n))) AudioEng.noteOff(n); // don't cut a key you're holding yourself
+}
+
+function renderAuto() {
+  const on = S.auto;
+  $('#freeCtl').classList.toggle('on', on);
+  $('#autoBtn').setAttribute('aria-pressed', String(on));
+  $('#autoKey').value = (S.autoMinor ? 'm' : 'M') + S.autoKey;
+  setSeg('#autoSizeSeg', S.autoSize);
+  const playing = new Set([...autoHeld.values()].map((a) => a.d));
+  $('#autoStrip').innerHTML = on ? ROMAN.map((_, d) => {
+    const ch = diatonic(d);
+    return `<button class="pchip${playing.has(d) ? ' on' : ''}" data-d="${d}"><span class="pn">${ch.numeral}</span><span class="pc">${ch.name}</span></button>`;
+  }).join('') : '';
+}
+
+function buildAuto() {
+  const opt = (pre, list, kind) => list.map(([pc, l], i) => `<option value="${pre}${i}">${spell(l, pc)} ${kind}</option>`).join('');
+  $('#autoKey').innerHTML = `<optgroup label="Major keys">${opt('M', ROOTS, 'major')}</optgroup><optgroup label="Minor keys">${opt('m', MINOR_KEYS, 'minor')}</optgroup>`;
+  const reset = () => { releaseAll(); renderAuto(); renderKeys(); renderDisplay(); };
+  $('#autoBtn').addEventListener('click', () => { AudioEng.unlock(); S.auto = !S.auto; reset(); });
+  $('#autoKey').addEventListener('change', (e) => {
+    S.autoMinor = e.target.value[0] === 'm';
+    S.autoKey = +e.target.value.slice(1);
+    e.target.blur();
+    reset();
+  });
+  $('#autoSizeSeg').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (b) { S.autoSize = +b.dataset.v; reset(); }
+  });
+  // Hold a chip to play that chord from the lower octave
+  const strip = $('#autoStrip');
+  const chips = new Map(); // pointerId -> midi
+  strip.addEventListener('pointerdown', (e) => {
+    const b = e.target.closest('.pchip');
+    if (!b) return;
+    e.preventDefault();
+    AudioEng.unlock();
+    const pc = (S.autoKey + autoScale()[+b.dataset.d]) % 12;
+    const m = range()[0] + pc;
+    chips.set(e.pointerId, m);
+    press(m, 'chip');
+  });
+  const up = (e) => { if (chips.has(e.pointerId)) { release(chips.get(e.pointerId)); chips.delete(e.pointerId); } };
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', up);
 }
 
 /* ======================= Touch / pointer input ======================= */
@@ -983,6 +1106,8 @@ function renderControls() {
   setSeg('#modeSeg', S.mode);
   setSeg('#srcSeg', S.source);
   $('#demoBtn').style.visibility = S.mode === 'free' ? 'hidden' : '';
+  $('#freeCtl').classList.toggle('show', S.mode === 'free');
+  renderAuto();
   $('#singleCtl').classList.toggle('show', S.mode !== 'free' && S.source === 'single');
   $('#progCtl').classList.toggle('show', S.mode !== 'free' && S.source === 'prog');
 
@@ -1029,6 +1154,7 @@ function renderControls() {
 }
 
 function buildControls() {
+  buildAuto();
   $('#rootChips').innerHTML = ROOTS.map(([pc, l], i) => `<button class="chip" data-v="${i}">${spell(l, pc)}</button>`).join('');
   $('#qualChips').innerHTML = QUALS.map((q) => `<button class="chip" data-v="${q.id}">${q.chip}</button>`).join('');
   $('#invChips').innerHTML = ['Root', '1st', '2nd', '3rd'].map((n, i) => `<button class="chip" data-v="${i}">${n}</button>`).join('');
@@ -1050,7 +1176,7 @@ function buildControls() {
     fn(b.dataset.v, b);
     save();
   });
-  bind('#modeSeg', (v) => { S.mode = v; refresh(); });
+  bind('#modeSeg', (v) => { releaseAll(); S.mode = v; refresh(); });
   bind('#srcSeg', (v) => { S.source = v; G.done.clear(); refresh(); });
   bind('#rootChips', (v) => { S.root = +v; refresh(); });
   bind('#qualChips', (v) => { S.quality = v; refresh(); });

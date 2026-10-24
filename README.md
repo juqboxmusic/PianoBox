@@ -21,6 +21,10 @@ Offline mode and a proper install need **HTTPS**. Put this folder on any static 
 
 Over plain HTTP on your LAN, *Add to Home Screen* still works on iOS, but the app won't work offline.
 
+## Auto Chords (Free Play)
+
+Turn on **Auto Chords** and pick a key (any major or minor) and Triads or 7ths. Each key in the scale then plays the chord built on that scale degree, lit up in neon. Dots mark the scale notes (pink is the key's home note). Keys outside the scale play a single note. The chips show every chord in the key; hold one to play it.
+
 ## Sounds
 
 - **Synth waveforms:** Sawtooth, Square, Triangle and Sine, generated live with Web Audio.

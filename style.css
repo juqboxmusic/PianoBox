@@ -173,7 +173,22 @@ body.mode-free #hudPrev, body.mode-free #hudNext, body.src-single #hudPrev, body
 /* Free play: no picker panel, just the detected chord in the top bar */
 .freeread { display: none; align-items: baseline; gap: 12px; min-width: 0; overflow: hidden; white-space: nowrap; padding-left: 6px; }
 body.mode-free .freeread { display: flex; }
-body.mode-free #srcSeg, body.mode-free .row.main { display: none; }
+body.mode-free #srcSeg, body.mode-free .display { display: none; }
+body.mode-free .row.main { margin-top: 6px; }
+
+/* Auto Chords */
+.autoopts { display: none; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+#freeCtl.on .autoopts { display: flex; }
+.autoopts > label { font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--dim); font-weight: 700; }
+#autoStrip { touch-action: none; }
+#autoStrip .pchip { cursor: pointer; }
+.key.inscale::before {
+  content: ""; position: absolute; left: 50%; bottom: 6px; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%;
+  background: #00e5ff; box-shadow: 0 0 6px #00e5ff; opacity: .75; pointer-events: none;
+}
+.key.inscale.tonic::before { background: #ff2bd6; box-shadow: 0 0 6px #ff2bd6; }
+.key.black.inscale::before { bottom: 4px; }
+.freeread .numeral { font-size: 18px; margin-right: 2px; }
 #fName { font-size: 24px; font-weight: 800; color: #fff; text-shadow: 0 0 14px rgba(0, 229, 255, .7); }
 #fNotes { font-size: 14px; font-weight: 700; color: var(--accent); overflow: hidden; text-overflow: ellipsis; }
 

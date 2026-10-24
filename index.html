@@ -52,6 +52,16 @@
       </div>
 
       <div class="controls">
+        <div id="freeCtl" class="ctl">
+          <div class="crow">
+            <button id="autoBtn" class="tbtn" aria-pressed="false">Auto Chords</button>
+            <div class="autoopts">
+              <label>Key</label><select id="autoKey" aria-label="Key"></select>
+              <div class="seg" id="autoSizeSeg"><button data-v="3">Triads</button><button data-v="4">7ths</button></div>
+              <div id="autoStrip" class="pstrip"></div>
+            </div>
+          </div>
+        </div>
         <div id="singleCtl" class="ctl">
           <div class="crow"><label>Root</label><div class="chips" id="rootChips"></div></div>
           <div class="crow"><label>Type</label><div class="chips scroll" id="qualChips"></div></div>
