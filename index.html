@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>PianoBox</title>
+  <meta name="description" content="Two-octave touch piano with neon chord and arpeggio guides.">
+  <meta name="theme-color" content="#07070d">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="PianoBox">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header id="panel">
+    <div class="row top">
+      <div class="brand"><span class="logo"></span><span>Piano<b>Box</b></span></div>
+      <div class="seg" id="modeSeg">
+        <button data-v="free">Free Play</button>
+        <button data-v="chords">Chords</button>
+        <button data-v="arp">Arpeggios</button>
+      </div>
+      <div class="seg" id="srcSeg">
+        <button data-v="single">Single Chord</button>
+        <button data-v="prog">Progressions</button>
+      </div>
+      <div class="spacer"></div>
+      <div class="soundpick"><select id="soundQuick" aria-label="Sound"></select><span class="sstat"></span></div>
+      <button id="sustainBtn" class="tbtn" aria-pressed="false">Sustain</button>
+      <button id="demoBtn" class="tbtn primary">&#9654; Demo</button>
+      <button id="settingsBtn" class="ibtn" aria-label="Settings">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M19.4 13a7.7 7.7 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-1.7-1L15 3h-4l-.4 2.7a7.6 7.6 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.7 7.7 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.6 7.6 0 0 0 1.7 1L11 21h4l.4-2.7a7.6 7.6 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)"/></svg>
+      </button>
+      <button id="hideBtn" class="ibtn" aria-label="Full-screen piano">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+      </button>
+    </div>
+
+    <div class="row main">
+      <div class="display" id="display">
+        <div class="dtop"><span id="dNumeral" class="numeral"></span><span id="dStreak" class="streak"></span></div>
+        <div id="dName" class="cname">C</div>
+        <div id="dTones" class="tones"></div>
+        <div id="dStatus" class="status"></div>
+      </div>
+
+      <div class="controls">
+        <div id="freeCtl" class="ctl">
+          <p class="hint">Play anything. PianoBox names the chord you're holding.<br>
+          Switch to <b>Chords</b> or <b>Arpeggios</b> and the keys will light up to guide you.</p>
+        </div>
+
+        <div id="singleCtl" class="ctl">
+          <div class="crow"><label>Root</label><div class="chips" id="rootChips"></div></div>
+          <div class="crow"><label>Type</label><div class="chips scroll" id="qualChips"></div></div>
+          <div class="crow" id="invRow"><label>Inversion</label><div class="chips" id="invChips"></div>
+            <button id="randBtn" class="chip ghost">&#127922; Random</button></div>
+        </div>
+
+        <div id="progCtl" class="ctl">
+          <div class="crow">
+            <label>Key</label><select id="keySel"></select>
+            <label>Progression</label><select id="progSel"></select>
+          </div>
+          <div class="crow strip">
+            <button id="prevBtn" class="ibtn sm" aria-label="Previous chord">&#9664;</button>
+            <div id="progStrip" class="pstrip"></div>
+            <button id="nextBtn" class="ibtn sm" aria-label="Next chord">&#9654;</button>
+          </div>
+        </div>
+
+        <div id="arpCtl" class="crow">
+          <label>Pattern</label><div class="chips" id="patChips"></div>
+          <label>Range</label><div class="chips" id="spanChips"></div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div id="hud">
+    <button id="hudShow" class="ibtn sm" aria-label="Show controls">
+      <svg viewBox="0 0 24 24" width="18" height="18"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M6 15l6-6 6 6"/></svg>
+    </button>
+    <button id="hudPrev" class="ibtn sm" aria-label="Previous chord">&#9664;</button>
+    <div class="hudname"><span id="hudNumeral" class="numeral"></span><span id="hudName"></span></div>
+    <button id="hudNext" class="ibtn sm" aria-label="Next chord">&#9654;</button>
+    <div id="hudStatus" class="status"></div>
+  </div>
+
+  <main id="kbdWrap">
+    <div id="kbd" class="kbd"></div>
+  </main>
+</div>
+
+<div id="sheet" class="sheet" hidden>
+  <div class="sheet-card">
+    <div class="sheet-head"><h2>Settings</h2><button id="sheetClose" class="ibtn" aria-label="Close">&#10005;</button></div>
+    <div class="srow"><label>Sound</label><select id="soundSel"></select><span class="sstat muted"></span></div>
+    <div class="srow"><label>Volume</label><input type="range" id="volRange" min="0" max="1" step="0.01"></div>
+    <div class="srow"><label>Keyboard range</label><div class="seg" id="octSeg">
+      <button data-v="2">C2–C4</button><button data-v="3">C3–C5</button><button data-v="4">C4–C6</button></div></div>
+    <div class="srow"><label>Key labels</label><div class="seg" id="labelSeg">
+      <button data-v="off">Off</button><button data-v="c">C only</button><button data-v="white">White keys</button><button data-v="all">All keys</button></div></div>
+    <div class="srow"><label>Guide colors</label><div class="seg" id="colorSeg">
+      <button data-v="tone">By chord tone</button><button data-v="mono">Single neon</button></div></div>
+    <div class="srow"><label>Progression voicing</label><div class="seg" id="voiceSeg">
+      <button data-v="smooth">Smooth (inversions)</button><button data-v="root">Root position</button></div></div>
+    <div class="srow"><label>Auto-advance</label><div class="seg" id="advSeg">
+      <button data-v="1">On</button><button data-v="0">Off</button></div></div>
+    <div class="srow"><label>Demo tempo <span id="tempoVal"></span></label><input type="range" id="tempoRange" min="50" max="160" step="1"></div>
+    <div class="srow" id="midiRow"><label>MIDI keyboard</label><button id="midiBtn" class="chip">Connect</button><span id="midiStatus" class="muted"></span></div>
+    <div class="legend" id="legend"></div>
+    <p class="muted small">Instrument sounds load the first time you pick them (about 1–3 MB each) and are then saved for offline use.
+      Grand Piano: <a href="https://archive.org/details/SalamanderGrandPianoV3" target="_blank" rel="noopener">Salamander Grand Piano</a> by Alexander Holm.
+      Other instruments: <a href="https://github.com/gleitz/midi-js-soundfonts" target="_blank" rel="noopener">FluidR3 GM soundfont</a> by Frank Wen, rendered by Benjamin Gleitzman. Both are licensed CC BY 3.0.</p>
+    <p class="muted small">Tip: on iPad, tap <b>Share &rarr; Add to Home Screen</b>. On Android, use the browser menu &rarr; <b>Install app</b>. On a computer you can play with the keyboard: <b>Z–M</b> for the lower octave, <b>Q–U</b> for the upper one.</p>
+  </div>
+</div>
+
+<div id="splash">
+  <div class="splash-inner">
+    <div class="splash-logo"><span></span><span></span><span></span><span></span><span></span></div>
+    <h1>Piano<b>Box</b></h1>
+    <p>Neon chord &amp; arpeggio trainer</p>
+    <button id="startBtn" class="tbtn primary big">Tap to play</button>
+  </div>
+</div>
+
+<div id="rotate"><div>&#8635;</div><p>Turn your device sideways for the full keyboard</p><button class="chip" id="rotateDismiss">Continue anyway</button></div>
+
+<script src="app.js"></script>
+</body>
+</html>
