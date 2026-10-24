@@ -112,7 +112,7 @@ const RELEASE = { piano: 0.09, ring: 0.45, hold: 0.12 };
 // Practice state and the sound (Grand Piano) start fresh on every launch; the other Settings are remembered.
 const DEFAULTS = {
   mode: 'free', source: 'single', root: 0, quality: 'maj', inversion: 0,
-  keyPc: 0, progId: 'pop', step: 0, arpPattern: 'up', arpSpan: 1,
+  keyPc: 0, progId: 'pop', step: 0, arpPattern: 'updown', arpSpan: 1,
   sound: 'grand', volume: 0.8, octave: 3, labels: 'all', colorMode: 'tone',
   voicing: 'smooth', autoAdvance: true, tempo: 96, hidePanel: false, sustain: false,
   auto: false, autoKey: 0, autoMinor: false, autoSize: 3,
