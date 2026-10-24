@@ -7,6 +7,7 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const LETTERS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
 const NAT_PC = [0, 2, 4, 5, 7, 9, 11];
 const SHARP = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+const FLAT = ['C', 'D♭', 'D', 'E♭', 'E', 'F', 'G♭', 'G', 'A♭', 'A', 'B♭', 'B'];
 const ACC = { '-2': '♭♭', '-1': '♭', '0': '', '1': '♯', '2': '♯♯' };
 const BLACK = new Set([1, 3, 6, 8, 10]);
 
@@ -112,11 +113,11 @@ const RELEASE = { piano: 0.09, ring: 0.45, hold: 0.12 };
 const DEFAULTS = {
   mode: 'free', source: 'single', root: 0, quality: 'maj', inversion: 0,
   keyPc: 0, progId: 'pop', step: 0, arpPattern: 'up', arpSpan: 1,
-  sound: 'grand', volume: 0.8, octave: 3, labels: 'white', colorMode: 'tone',
+  sound: 'grand', volume: 0.8, octave: 3, labels: 'all', colorMode: 'tone',
   voicing: 'smooth', autoAdvance: true, tempo: 96, hidePanel: false, sustain: false,
 };
 const PREFS = ['volume', 'octave', 'labels', 'colorMode', 'voicing', 'autoAdvance', 'tempo'];
-const STORE_KEY = 'pianobox.prefs.v2';
+const STORE_KEY = 'pianobox.prefs.v3';
 let S = { ...DEFAULTS };
 try {
   const saved = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
@@ -533,7 +534,7 @@ function baseLabel(m) {
   const pc = m % 12, oct = Math.floor(m / 12) - 1;
   if (S.labels === 'off') return '';
   if (S.labels === 'c') return pc === 0 ? 'C' + oct : '';
-  if (BLACK.has(pc)) return S.labels === 'all' ? `${SHARP[pc]}<br>${rootName(pc)}` : '';
+  if (BLACK.has(pc)) return S.labels === 'all' ? `${SHARP[pc]}<br>${FLAT[pc]}` : '';
   return pc === 0 ? 'C' + oct : SHARP[pc];
 }
 

@@ -211,7 +211,7 @@ body.mode-free #srcSeg, body.mode-free .row.main { display: none; }
 
 /* plain labels */
 .key .base { position: absolute; left: 0; right: 0; bottom: 16px; text-align: center; font-size: 13px; font-weight: 700; color: #9a9cb5; pointer-events: none; }
-.key.black .base { color: #8a8ca4; bottom: 12px; font-size: 10px; }
+.key.black .base { color: #b4b6cc; bottom: 12px; font-size: 11px; line-height: 1.25; }
 
 /* neon guide */
 .key .led, .key .lab { display: none; pointer-events: none; }
