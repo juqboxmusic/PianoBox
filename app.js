@@ -567,8 +567,7 @@ function renderKeys() {
   } else if (S.mode === 'songs') {
     const s = Song.cur;
     if (s && !Song.finished) {
-      const a = s.steps[Song.idx], b = s.steps[Song.idx + 1];
-      if (b) b.notes.forEach((n) => show.set(n.m, { t: n.tone, faint: true }));
+      const a = s.steps[Song.idx];
       if (a) a.notes.forEach((n) => { if (!a.hit.has(n)) show.set(n.m, { t: n.tone, next: true }); });
     }
   } else {
@@ -1289,6 +1288,7 @@ function drawRoll(now) {
     for (const st of s.steps) {
       if (st.t > Song.pos + 3.2) break;   // still above the top of the roll
       if (st.t + 8 < Song.pos) continue;  // long since scrolled past
+      if (st.done) continue; // played notes leave the roll
       for (const n of st.notes) {
         const L = lanes[n.m];
         if (!L || L.black !== pass) continue;
@@ -1297,8 +1297,7 @@ function drawRoll(now) {
         const isCur = st === cur && !st.hit.has(n);
         const pad = L.black ? 1 : 3;
         let fill = n.tone.color, alpha = 0.85;
-        if (st.done) { fill = st.clean === false ? '#ff9500' : '#39ff14'; alpha = 0.35; }
-        else if (st.missed) { fill = '#ff2a3c'; alpha = 0.35; }
+        if (st.missed) { fill = '#ff2a3c'; alpha = 0.35; }
         c.globalAlpha = alpha;
         c.shadowColor = fill;
         c.shadowBlur = isCur ? 22 * pulse : 8;
@@ -1313,7 +1312,7 @@ function drawRoll(now) {
           c.fill();
         }
         c.globalAlpha = 1;
-        if (y1 - y0 > 20 && L.w > 18 && !st.done) {
+        if (y1 - y0 > 20 && L.w > 18) {
           c.fillStyle = 'rgba(7,7,13,.85)';
           c.font = `800 ${L.black ? 10 : 12}px -apple-system, system-ui, sans-serif`;
           c.textAlign = 'center';
