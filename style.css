@@ -170,6 +170,13 @@ body.hidepanel #panel { display: none; }
 body.hidepanel #hud { display: flex; }
 body.mode-free #hudPrev, body.mode-free #hudNext, body.src-single #hudPrev, body.src-single #hudNext { visibility: hidden; }
 
+/* Free play: no picker panel, just the detected chord in the top bar */
+.freeread { display: none; align-items: baseline; gap: 12px; min-width: 0; overflow: hidden; white-space: nowrap; padding-left: 6px; }
+body.mode-free .freeread { display: flex; }
+body.mode-free #srcSeg, body.mode-free .row.main { display: none; }
+#fName { font-size: 24px; font-weight: 800; color: #fff; text-shadow: 0 0 14px rgba(0, 229, 255, .7); }
+#fNotes { font-size: 14px; font-weight: 700; color: var(--accent); overflow: hidden; text-overflow: ellipsis; }
+
 /* ---------- Keyboard ---------- */
 #kbdWrap { flex: 1; min-height: 0; position: relative; padding: 10px 8px 8px; }
 .kbd {

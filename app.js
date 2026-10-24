@@ -154,27 +154,71 @@ function setLoop(buf) {
   if (b - a > sr * 0.3) buf._loop = [a / sr, b / sr];
 }
 
-const Samples = {
-  banks: new Map(), // id -> { buffers: Map(midi -> AudioBuffer), loaded, total }
+// The Salamander recordings ring for up to 16 s; keep 9 s (with a fade) to save a lot of memory on tablets.
+const MAX_SECS = 9, FADE_SECS = 2;
+function trim(c, buf) {
+  if (buf.duration <= MAX_SECS) return buf;
+  const sr = buf.sampleRate, len = Math.floor(MAX_SECS * sr), fade = Math.floor(FADE_SECS * sr);
+  const out = c.createBuffer(buf.numberOfChannels, len, sr);
+  for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+    const d = buf.getChannelData(ch).slice(0, len);
+    for (let i = 0; i < fade; i++) d[len - fade + i] *= 1 - i / fade;
+    out.copyToChannel(d, ch);
+  }
+  return out;
+}
 
-  load(id) {
-    let bank = this.banks.get(id);
-    if (bank && !(bank.loaded === bank.total && bank.buffers.size === 0)) return bank;
+// Samples whose notes are within a semitone of a key on screen
+function visibleGrid() { const [lo, hi] = range(); return GRID.filter((m) => m >= lo - 2 && m <= hi + 2); }
+
+const Samples = {
+  banks: new Map(), // id -> { id, buffers: Map(midi -> AudioBuffer), jobs: Map(midi -> Promise), failed: Set, need: [] }
+
+  fetchOne(b, m) {
+    if (b.jobs.has(m) && !b.failed.has(m)) return b.jobs.get(m);
+    b.failed.delete(m);
     const c = AudioEng.init();
-    bank = { buffers: new Map(), loaded: 0, total: GRID.length };
-    this.banks.set(id, bank);
-    if (!c) return bank;
-    const center = 12 * (S.octave + 1) + 12;
-    const order = [...GRID].sort((a, b) => Math.abs(a - center) - Math.abs(b - center));
-    bank.promise = Promise.all(order.map((m) =>
-      fetch(sampleUrl(id, m), { mode: 'cors' })
-        .then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
-        .then((ab) => new Promise((res, rej) => c.decodeAudioData(ab, res, rej)))
-        .then((buf) => { if (SOUNDS[id].kind === 'hold') setLoop(buf); bank.buffers.set(m, buf); })
-        .catch(() => {})
-        .finally(() => { bank.loaded++; renderSoundStatus(); })));
+    const p = fetch(sampleUrl(b.id, m), { mode: 'cors' })
+      .then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+      .then((ab) => new Promise((res, rej) => c.decodeAudioData(ab, res, rej)))
+      .then((buf) => {
+        buf = trim(c, buf);
+        if (SOUNDS[b.id].kind === 'hold') setLoop(buf);
+        b.buffers.set(m, buf);
+      })
+      .catch(() => { b.failed.add(m); })
+      .finally(renderSoundStatus);
+    b.jobs.set(m, p);
+    return p;
+  },
+
+  // Load what the on-screen keys need first (about a third of the set), then the rest quietly.
+  load(id) {
+    let b = this.banks.get(id);
+    if (!b) { b = { id, buffers: new Map(), jobs: new Map(), failed: new Set() }; this.banks.set(id, b); }
+    if (!AudioEng.init()) return b;
+    b.need = visibleGrid();
+    b.ready = Promise.all(b.need.map((m) => this.fetchOne(b, m)));
+    b.ready.then(() => this.fillRest(b));
     renderSoundStatus();
-    return bank;
+    return b;
+  },
+
+  async fillRest(b) {
+    const center = range()[0] + 12;
+    const rest = GRID.filter((m) => !b.jobs.has(m) || b.failed.has(m))
+      .sort((x, y) => Math.abs(x - center) - Math.abs(y - center));
+    for (let i = 0; i < rest.length; i += 2) {
+      if (S.sound !== b.id) return; // picks up again next time this instrument is chosen
+      await Promise.all(rest.slice(i, i + 2).map((m) => this.fetchOne(b, m)));
+    }
+  },
+
+  progress(id) {
+    const b = this.banks.get(id);
+    if (!b || !b.need) return null;
+    const done = b.need.filter((m) => b.buffers.has(m) || b.failed.has(m)).length;
+    return { done, total: b.need.length, ok: b.buffers.size > 0 };
   },
 
   nearest(id, m) {
@@ -573,12 +617,8 @@ function renderDisplay() {
   if (S.mode === 'free') {
     const hm = heldMidis();
     const name = detectChord(hm);
-    nu.textContent = 'Free play';
-    nm.textContent = name || (hm.length ? '' : '—');
-    tn.innerHTML = [...new Set(hm.map((m) => rootName(m % 12)))]
-      .map((n) => `<span class="tone" style="color:${MONO}"><span>${n}</span></span>`).join('');
-    st.textContent = hm.length ? `${hm.length} note${hm.length > 1 ? 's' : ''} held` : 'Play any keys — chords get named here';
-    sk.textContent = '';
+    $('#fName').textContent = name;
+    $('#fNotes').textContent = [...new Set(hm.map((m) => rootName(m % 12)))].join(' · ');
     hn.textContent = name || '—'; hnu.textContent = ''; hst.textContent = '';
     return;
   }
@@ -874,16 +914,16 @@ function setSound(id) {
   $('#soundSel').value = $('#soundQuick').value = id;
   if (SOUNDS[id].synth) { renderSoundStatus(); previewSound(); return; }
   const bank = Samples.load(id);
-  if (bank.promise) bank.promise.then(() => { if (S.sound === id && bank.buffers.size) previewSound(); });
+  if (bank.ready) bank.ready.then(() => { if (S.sound === id && bank.buffers.size) previewSound(); });
 }
 
 function renderSoundStatus() {
   const snd = SOUNDS[S.sound];
-  const bank = !snd.synth && Samples.banks.get(snd.id);
+  const p = !snd.synth && Samples.progress(snd.id);
   let txt = '';
-  if (bank) {
-    if (bank.loaded < bank.total) txt = `Loading ${Math.round((bank.loaded / bank.total) * 100)}%`;
-    else if (!bank.buffers.size) txt = 'Couldn’t load: check your connection';
+  if (p) {
+    if (p.done < p.total) txt = `Loading ${Math.round((p.done / p.total) * 100)}%`;
+    else if (!p.ok) txt = 'Couldn’t load: check your connection';
   }
   document.querySelectorAll('.sstat').forEach((el) => { el.textContent = txt; });
 }
@@ -942,9 +982,7 @@ function renderStrip() {
 function renderControls() {
   setSeg('#modeSeg', S.mode);
   setSeg('#srcSeg', S.source);
-  $('#srcSeg').style.visibility = S.mode === 'free' ? 'hidden' : '';
   $('#demoBtn').style.visibility = S.mode === 'free' ? 'hidden' : '';
-  $('#freeCtl').classList.toggle('show', S.mode === 'free');
   $('#singleCtl').classList.toggle('show', S.mode !== 'free' && S.source === 'single');
   $('#progCtl').classList.toggle('show', S.mode !== 'free' && S.source === 'prog');
 
@@ -1020,7 +1058,10 @@ function buildControls() {
   bind('#patChips', (v) => { S.arpPattern = v; refresh(); });
   bind('#spanChips', (v) => { S.arpSpan = +v; refresh(); });
   bind('#progStrip', (v, b) => setStep(+b.dataset.i));
-  bind('#octSeg', (v) => { releaseAll(); S.octave = +v; buildKeyboard(); refresh(); });
+  bind('#octSeg', (v) => {
+    releaseAll(); S.octave = +v; buildKeyboard(); refresh();
+    if (!SOUNDS[S.sound].synth) Samples.load(S.sound);
+  });
   bind('#labelSeg', (v) => { S.labels = v; refresh(); });
   bind('#colorSeg', (v) => { S.colorMode = v; refresh(); });
   bind('#voiceSeg', (v) => { S.voicing = v; refresh(); });
@@ -1096,4 +1137,6 @@ buildControls();
 buildKeyboard();
 refresh();
 if (!SOUNDS[S.sound].synth) Samples.load(S.sound);
+// Quietly pre-download (not decode) the on-screen Grand Piano notes so choosing it later is near-instant.
+if (S.sound !== 'grand') setTimeout(() => visibleGrid().forEach((m) => fetch(sampleUrl('grand', m), { mode: 'cors' }).catch(() => {})), 4000);
 })();
