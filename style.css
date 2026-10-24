@@ -256,6 +256,8 @@ body.mode-songs #kbd { flex: 58 1 0; height: auto; border-radius: 0 0 14px 14px;
 .imp-row input, .imp-row select { flex: 1; min-width: 0; }
 .imp-row input { height: 36px; border-radius: 9px; border: 1px solid var(--line); background: var(--panel2); padding: 0 10px; font-size: 16px; -webkit-user-select: text; user-select: text; }
 .imp-btns { justify-content: flex-end; }
+.imp-sum { justify-content: space-between; }
+#impFilter { flex-wrap: wrap; }
 .imp-err { margin: 0; color: #ff6a7a; font-weight: 700; }
 
 /* ---------- Keyboard ---------- */

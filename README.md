@@ -34,7 +34,10 @@ Pick a song (tap the song name), then follow the falling notes and the glowing k
 - **Listen:** PianoBox plays the song for you, lighting each key.
 - **Practising sections:** tap the timeline to jump, or drag across it to loop that section. The **A** and **B** buttons set a loop at the current note, and ✕ clears it. ⏮ goes back to the start (or to the loop start).
 - **Library:** 21 public-domain melodies (`songs.js`) with search and Beginner / Easy / Intermediate filters.
-- **Import MIDI:** load any `.mid` file, for example one you've downloaded from Online Sequencer. You choose which part is the melody, and PianoBox takes the top note of that part (one note at a time) and fits it to the keyboard. Imported songs are stored only on that device, under *My songs*.
+- **Import MIDI:** load any `.mid` file, for example one you've downloaded from Online Sequencer, and choose which part is the melody. Imported songs are stored only on that device, under *My songs*.
+  - **Top line only** (default) strips accompaniment from the part: notes struck under a melody note that's still sounding, and low notes that fill the gaps (more than a 6th below the surrounding tune). **Every top note** keeps the highest note of every chord.
+  - **Ignore below** drops everything under a chosen pitch, such as middle C, to cut off a left hand by hand.
+  - **Preview** plays the first 12 seconds of the result before you add it.
 
 ## Sounds
 

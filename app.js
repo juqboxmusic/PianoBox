@@ -977,14 +977,35 @@ function parseMidiFile(buf) {
   return { title, tracks, bars };
 }
 
-// Keep the top note wherever several start together, then make it one-note-at-a-time
-function melodyOf(notes) {
-  const out = [];
-  [...notes].sort((a, b) => a.t - b.t || b.m - a.m).forEach((n) => {
-    const last = out[out.length - 1];
-    if (last && n.t - last.t < 0.03) { if (n.m > last.m) { last.m = n.m; last.d = n.d; } return; }
-    out.push({ ...n });
+// Pull a single melody line out of a part.
+//  'top'   – top note of every chord, then drop accompaniment: notes that start underneath a
+//            melody note that's still sounding, and stray low notes (bass filling the gaps)
+//  'loose' – just the top note of every chord
+// Notes below `floor` (a MIDI note number) are ignored first, e.g. to cut off the left hand.
+function melodyOf(notes, { filter = 'top', floor = 0 } = {}) {
+  const tops = [];
+  notes.filter((n) => n.m >= floor).sort((a, b) => a.t - b.t || b.m - a.m).forEach((n) => {
+    const last = tops[tops.length - 1];
+    if (last && n.t - last.t < 0.03) return; // same onset: the highest came first
+    tops.push({ ...n });
   });
+  let out = tops;
+  if (filter === 'top') {
+    // 1. Under a held melody note? Only counts if a good part of that note is still left,
+    //    so ordinary legato overlaps in a falling melody survive.
+    const kept = [];
+    for (const n of tops) {
+      const h = kept[kept.length - 1];
+      if (h && n.m < h.m && n.t < h.t + h.d - Math.max(0.06, h.d * 0.25)) continue;
+      kept.push(n);
+    }
+    // 2. Far below the surrounding tune (more than a 6th under the local median)? Drop it.
+    const med = (a) => { const b = [...a].sort((x, y) => x - y); return b[b.length >> 1]; };
+    out = kept.filter((n, i) => {
+      const around = kept.slice(Math.max(0, i - 4), i).concat(kept.slice(i + 1, i + 5)).map((x) => x.m);
+      return around.length < 3 || n.m >= med(around) - 9;
+    });
+  }
   for (let i = 0; i < out.length - 1; i++) out[i].d = Math.max(0.05, Math.min(out[i].d, out[i + 1].t - out[i].t));
   return out;
 }
@@ -1383,22 +1404,71 @@ function importMidi(file) {
     const best = mid.tracks.reduce((b, t, i) => ((!big || t.notes.length >= 8) && (b < 0 || avg(t) > avg(mid.tracks[b])) ? i : b), -1);
     const opts = mid.tracks.map((t, i) => `<option value="${i}"${i === Math.max(0, best) ? ' selected' : ''}>${esc(t.name)} · ${t.notes.length} notes</option>`);
     if (mid.tracks.length > 1) opts.push('<option value="all">All parts (top notes)</option>');
+    const floors = [['0', 'Nothing'], ['36', 'C2'], ['48', 'C3'], ['55', 'G3'], ['60', 'C4 (middle C)'], ['67', 'G4'], ['72', 'C5']]
+      .map(([v, n]) => `<option value="${v}">${n}</option>`).join('');
     box.innerHTML = `
       <div class="imp-row"><label>Title</label><input id="impTitle" type="text" maxlength="80" value="${esc(pendingImport.title)}"></div>
       <div class="imp-row"><label>Melody from</label><select id="impTrack">${opts.join('')}</select></div>
+      <div class="imp-row"><label>Filter</label><div class="seg" id="impFilter"><button data-v="top" class="on">Top line only</button><button data-v="loose">Every top note</button></div></div>
+      <div class="imp-row"><label>Ignore below</label><select id="impFloor">${floors}</select></div>
+      <div class="imp-row imp-sum"><span id="impSummary" class="muted"></span><button class="chip" id="impPreview">&#9654; Preview</button></div>
       <div class="imp-row imp-btns"><button class="tbtn" id="impCancel">Cancel</button><button class="tbtn primary" id="impAdd">Add to my songs</button></div>`;
     box.hidden = false;
+    updateImportSummary();
   }).catch((e) => {
     box.innerHTML = `<p class="imp-err">${esc(e.message || 'Couldn’t read that file.')}</p>`;
     box.hidden = false;
   });
 }
 
-function addImported() {
+// The melody the import panel's current choices produce
+function importMelody() {
   const { mid } = pendingImport;
   const sel = $('#impTrack').value;
   const src = sel === 'all' ? mid.tracks.flatMap((t) => t.notes) : mid.tracks[+sel].notes;
-  const mel = melodyOf(src);
+  return melodyOf(src, { filter: $('#impFilter .on').dataset.v, floor: +$('#impFloor').value });
+}
+
+function updateImportSummary() {
+  stopPreview();
+  const mel = importMelody();
+  const ms = mel.map((n) => n.m);
+  const name = (m) => SHARP[m % 12] + (Math.floor(m / 12) - 1);
+  $('#impSummary').textContent = mel.length
+    ? `Melody: ${mel.length} notes · ${name(Math.min(...ms))}–${name(Math.max(...ms))}`
+    : 'No notes left: try a lower “Ignore below”';
+}
+
+// Hear the first ~12 seconds of the extracted melody
+let previewTimers = [];
+function stopPreview() {
+  previewTimers.forEach(clearTimeout);
+  previewTimers = [];
+  const b = $('#impPreview');
+  if (b) b.innerHTML = '&#9654; Preview';
+}
+function togglePreview() {
+  if (previewTimers.length) { stopPreview(); return; }
+  const mel = importMelody();
+  if (!mel.length) return;
+  AudioEng.unlock();
+  const t0 = mel[0].t;
+  const part = mel.filter((n) => n.t - t0 < 12);
+  part.forEach((n) => {
+    previewTimers.push(setTimeout(() => {
+      AudioEng.noteOn(n.m, 0.75);
+      setTimeout(() => AudioEng.noteOff(n.m), Math.max(100, n.d * 1000));
+    }, (n.t - t0) * 1000));
+  });
+  const last = part[part.length - 1];
+  previewTimers.push(setTimeout(stopPreview, (last.t - t0 + last.d) * 1000 + 200));
+  $('#impPreview').innerHTML = '&#9632; Stop';
+}
+
+function addImported() {
+  stopPreview();
+  const { mid } = pendingImport;
+  const mel = importMelody();
   if (!mel.length) return;
   const t0 = mel[0].t;
   const r3 = (x) => Math.round(x * 1000) / 1000;
@@ -1422,7 +1492,7 @@ function buildSongs() {
   const sheet = $('#songSheet');
   const open = () => { Song.pause(); renderSongList(); sheet.hidden = false; };
   $('#songPick').addEventListener('click', open);
-  $('#songClose').addEventListener('click', () => { sheet.hidden = true; });
+  $('#songClose').addEventListener('click', () => { stopPreview(); sheet.hidden = true; });
   sheet.addEventListener('click', (e) => { if (e.target === sheet) sheet.hidden = true; });
   $('#songSearch').addEventListener('input', renderSongList);
   $('#songFilter').addEventListener('click', (e) => {
@@ -1449,7 +1519,13 @@ function buildSongs() {
   });
   $('#importPanel').addEventListener('click', (e) => {
     if (e.target.id === 'impAdd') addImported();
-    if (e.target.id === 'impCancel') { pendingImport = null; $('#importPanel').hidden = true; }
+    if (e.target.id === 'impCancel') { stopPreview(); pendingImport = null; $('#importPanel').hidden = true; }
+    if (e.target.id === 'impPreview') togglePreview();
+    const f = e.target.closest('#impFilter button');
+    if (f) { setSeg('#impFilter', f.dataset.v); updateImportSummary(); }
+  });
+  $('#importPanel').addEventListener('change', (e) => {
+    if (e.target.id === 'impTrack' || e.target.id === 'impFloor') updateImportSummary();
   });
 
   $('#songModeSeg').addEventListener('click', (e) => {
