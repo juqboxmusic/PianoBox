@@ -1266,8 +1266,8 @@ function drawRoll(now) {
   // white-key notes first so black-key notes sit on top
   for (const pass of [false, true]) {
     for (const st of s.steps) {
-      const top = y(st.t + 2);
-      if (top > H) break;
+      if (st.t > Song.pos + 3.2) break;   // still above the top of the roll
+      if (st.t + 8 < Song.pos) continue;  // long since scrolled past
       for (const n of st.notes) {
         const L = lanes[n.m];
         if (!L || L.black !== pass) continue;

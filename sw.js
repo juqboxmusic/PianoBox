@@ -1,5 +1,5 @@
 // Offline support: serve the app shell from cache, refresh it in the background.
-const CACHE = 'pianobox-v8';
+const CACHE = 'pianobox-v9';
 const SAMPLE_CACHE = 'pianobox-samples'; // instrument recordings never change, keep them across versions
 const SAMPLE_HOSTS = ['tonejs.github.io', 'gleitz.github.io'];
 const SHELL = [
