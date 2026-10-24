@@ -25,6 +25,7 @@
         <button data-v="free">Free Play</button>
         <button data-v="chords">Chords</button>
         <button data-v="arp">Arpeggios</button>
+        <button data-v="songs">Songs</button>
       </div>
       <div class="seg" id="srcSeg">
         <button data-v="single">Single Chord</button>
@@ -52,6 +53,27 @@
       </div>
 
       <div class="controls">
+        <div id="songCtl" class="ctl">
+          <div class="crow">
+            <button id="songPick" class="songpick" aria-label="Choose a song">
+              <span class="sp-text"><span id="songTitle" class="sp-title">Choose a song</span><span id="songSub" class="sp-sub"></span></span>
+              <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="seg" id="songModeSeg"><button data-v="wait">Wait for me</button><button data-v="play">Play along</button><button data-v="listen">Listen</button></div>
+            <button id="songRestart" class="ibtn sm" aria-label="Back to the start">
+              <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 5h2.5v14H6zM19 5v14L9.5 12z"/></svg>
+            </button>
+            <button id="songPlay" class="tbtn primary">&#9654; Play</button>
+            <div class="seg" id="songSpeedSeg"><button data-v="0.5">50%</button><button data-v="0.75">75%</button><button data-v="1">100%</button></div>
+          </div>
+          <div class="crow">
+            <div id="songTL" class="tl" title="Tap to jump · drag to loop a section">
+              <div id="tlLoop" class="tl-loop"></div><div id="tlFill" class="tl-fill"></div><div id="tlHead" class="tl-head"></div>
+            </div>
+            <span id="songTime" class="tl-time">0:00 / 0:00</span>
+            <span class="loopctl"><label>Loop</label><button id="loopA" class="chip">A</button><button id="loopB" class="chip">B</button><button id="loopX" class="chip" aria-label="Clear loop">&#10005;</button></span>
+          </div>
+        </div>
         <div id="freeCtl" class="ctl">
           <div class="crow">
             <button id="autoBtn" class="tbtn" aria-pressed="false">Auto Chords</button>
@@ -100,6 +122,7 @@
   </div>
 
   <main id="kbdWrap">
+    <div id="rollWrap"><canvas id="roll"></canvas></div>
     <div id="kbd" class="kbd"></div>
   </main>
 </div>
@@ -129,6 +152,20 @@
   </div>
 </div>
 
+<div id="songSheet" class="sheet" hidden>
+  <div class="sheet-card songs-card">
+    <div class="sheet-head"><h2>Songs</h2><button id="songClose" class="ibtn" aria-label="Close">&#10005;</button></div>
+    <div class="song-tools">
+      <input id="songSearch" type="search" placeholder="Search songs or composers" autocomplete="off" spellcheck="false">
+      <label class="tbtn primary importbtn">Import MIDI<input id="midiFile" type="file" accept=".mid,.midi,audio/midi,audio/x-midi,audio/mid" hidden></label>
+    </div>
+    <div class="seg" id="songFilter"><button data-v="all">All</button><button data-v="1">Beginner</button><button data-v="2">Easy</button><button data-v="3">Intermediate</button><button data-v="mine">My songs</button></div>
+    <div id="importPanel" class="import-panel" hidden></div>
+    <div id="songList" class="song-list"></div>
+    <p class="muted small">Built-in songs are public-domain melodies. Imported MIDI files are read and stored only on this device. PianoBox picks out the melody (one note at a time) and fits it to the two-octave keyboard.</p>
+  </div>
+</div>
+
 <div id="splash">
   <div class="splash-inner">
     <div class="splash-logo"><span></span><span></span><span></span><span></span><span></span></div>
@@ -140,6 +177,7 @@
 
 <div id="rotate"><div>&#8635;</div><p>Turn your device sideways for the full keyboard</p><button class="chip" id="rotateDismiss">Continue anyway</button></div>
 
+<script src="songs.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

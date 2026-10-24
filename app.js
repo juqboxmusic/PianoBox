@@ -381,7 +381,10 @@ const AudioEng = {
 };
 
 /* ======================= Chords & voicings ======================= */
-function range() { const lo = 12 * (S.octave + 1); return [lo, lo + 24]; }
+function range() {
+  const lo = S.mode === 'songs' && Song.cur ? Song.cur.lo : 12 * (S.octave + 1);
+  return [lo, lo + 24];
+}
 const byMidi = (a, b) => a.midi - b.midi;
 
 function makeChord(rootPc, rootLetter, qid) {
@@ -503,8 +506,11 @@ function detectChord(midis) {
 const kbd = $('#kbd');
 const BOFF = { 1: -0.12, 3: 0.12, 6: -0.16, 8: 0, 10: 0.16 };
 
+let builtLo = null;
 function buildKeyboard() {
   const [lo, hi] = range();
+  builtLo = lo;
+  lanesDirty = true;
   kbd.innerHTML = '';
   keyEls = {};
   const ww = 100 / 15;
@@ -558,6 +564,13 @@ function renderKeys() {
     G.arp.forEach((v) => { if (!show.has(v.midi)) show.set(v.midi, { t: v.t, faint: true }); });
     const nx = G.arp[G.arpIdx];
     if (nx && !G.solved) show.set(nx.midi, { t: nx.t, next: true });
+  } else if (S.mode === 'songs') {
+    const s = Song.cur;
+    if (s && !Song.finished) {
+      const a = s.steps[Song.idx], b = s.steps[Song.idx + 1];
+      if (b) b.notes.forEach((n) => show.set(n.m, { t: n.tone, faint: true }));
+      if (a) a.notes.forEach((n) => { if (!a.hit.has(n)) show.set(n.m, { t: n.tone, next: true }); });
+    }
   } else {
     for (const a of autoHeld.values()) a.voicing.forEach((v) => show.set(v.midi, { t: v.t }));
   }
@@ -621,6 +634,13 @@ function chordLabel() {
 function renderDisplay() {
   const nm = $('#dName'), nu = $('#dNumeral'), tn = $('#dTones'), st = $('#dStatus'), sk = $('#dStreak');
   const hn = $('#hudName'), hnu = $('#hudNumeral'), hst = $('#hudStatus');
+  if (S.mode === 'songs') {
+    const txt = Song.status();
+    $('#fName').textContent = Song.cur ? Song.cur.title : '';
+    $('#fNotes').innerHTML = txt;
+    hn.textContent = Song.cur ? Song.cur.title : ''; hnu.textContent = ''; hst.innerHTML = txt;
+    return;
+  }
   if (S.mode === 'free') {
     const autos = [...autoHeld.values()];
     const last = autos[autos.length - 1];
@@ -691,6 +711,7 @@ function success() {
 }
 
 function guidePress(m, src, auto) {
+  if (S.mode === 'songs') { Song.press(m, src); renderDisplay(); return; }
   if (S.mode === 'free') {
     if (auto) { auto.voicing.forEach((v) => flash(v.midi, true, v.t.color)); renderKeys(); renderAuto(); }
     else flash(m, true, RAINBOW[m % 12]);
@@ -859,6 +880,625 @@ function buildAuto() {
   window.addEventListener('pointercancel', up);
 }
 
+/* ======================= Songs: parsing ======================= */
+const NOTE_RE = /^([A-G])(#|b)?(-?\d)$/;
+function noteMidi(tok) {
+  const m = NOTE_RE.exec(tok);
+  if (!m) return null;
+  return 12 * (+m[3] + 1) + NAT_PC[LETTERS.indexOf(m[1])] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0);
+}
+
+// Built-in notation -> { notes: [{t, d, m}] in seconds, bars: [seconds] }
+function parseNotation(def) {
+  const spb = 60 / def.bpm;
+  const notes = [], bars = [0];
+  let beat = 0, len = 1;
+  for (const tok of def.notes.trim().split(/\s+/)) {
+    if (tok === '|') { bars.push(beat * spb); continue; }
+    const [name, l] = tok.split(':');
+    if (l) len = +l;
+    const m = name === 'R' ? null : noteMidi(name);
+    if (m != null) notes.push({ t: beat * spb, d: len * spb * 0.95, m });
+    beat += len;
+  }
+  return { notes, bars };
+}
+
+// Standard MIDI file -> { title, tracks: [{ name, notes: [{t, d, m}] }], bars }
+function parseMidiFile(buf) {
+  const d = new DataView(buf);
+  let p = 0;
+  const u8 = () => d.getUint8(p++);
+  const u16 = () => { const v = d.getUint16(p); p += 2; return v; };
+  const u32 = () => { const v = d.getUint32(p); p += 4; return v; };
+  const str = (n) => { let s = ''; for (let i = 0; i < n; i++) s += String.fromCharCode(d.getUint8(p + i)); p += n; return s; };
+  const vlq = () => { let v = 0, b; do { b = u8(); v = v * 128 + (b & 0x7f); } while (b & 0x80); return v; };
+  if (buf.byteLength < 14 || str(4) !== 'MThd') throw new Error('That file isn’t a MIDI file.');
+  const hlen = u32(); u16(); const ntr = u16(); const div = u16();
+  p = 8 + hlen;
+  if (div & 0x8000) throw new Error('This MIDI file uses a timing format PianoBox doesn’t support.');
+  const tempos = [], sigs = [], raw = [];
+  let lastTick = 0;
+  while (p + 8 <= d.byteLength && raw.length < ntr) {
+    const id = str(4), len = u32(), end = Math.min(p + len, d.byteLength);
+    if (id !== 'MTrk') { p = end; continue; }
+    let tick = 0, run = 0, name = '';
+    const open = new Map(), notes = [];
+    while (p < end) {
+      tick += vlq();
+      let st = d.getUint8(p);
+      if (st & 0x80) { p++; if (st < 0xf0) run = st; } else { st = run; if (!st) break; }
+      if (st === 0xff) {
+        const type = u8(), l = vlq(), at = p;
+        if (type === 0x51 && l >= 3) tempos.push({ tick, us: (d.getUint8(at) << 16) | (d.getUint8(at + 1) << 8) | d.getUint8(at + 2) });
+        else if (type === 0x58 && l >= 2) sigs.push({ tick, num: d.getUint8(at), den: 2 ** d.getUint8(at + 1) });
+        else if (type === 0x03 && !name) { try { name = new TextDecoder().decode(new Uint8Array(buf, at, l)).replace(/\0/g, '').trim(); } catch (e) {} }
+        p = at + l;
+      } else if (st === 0xf0 || st === 0xf7) {
+        p += vlq();
+      } else {
+        const type = st & 0xf0, ch = st & 0x0f;
+        if (type === 0xc0 || type === 0xd0) { p += 1; continue; }
+        const a = u8(), b = u8();
+        const key = ch * 128 + a;
+        if (type === 0x90 && b > 0) {
+          if (!open.has(key)) open.set(key, []);
+          open.get(key).push(tick);
+        } else if (type === 0x80 || type === 0x90) {
+          const q = open.get(key);
+          if (q && q.length) notes.push({ s: q.shift(), e: tick, m: a, ch });
+        }
+      }
+    }
+    p = end;
+    lastTick = Math.max(lastTick, tick);
+    raw.push({ name, notes });
+  }
+  tempos.sort((a, b) => a.tick - b.tick);
+  if (!tempos.length || tempos[0].tick > 0) tempos.unshift({ tick: 0, us: 500000 });
+  let acc = 0;
+  tempos.forEach((t, i) => { if (i) acc += ((t.tick - tempos[i - 1].tick) * tempos[i - 1].us) / div / 1e6; t.sec = acc; });
+  const sec = (tick) => {
+    let i = tempos.length - 1;
+    while (i > 0 && tempos[i].tick > tick) i--;
+    return tempos[i].sec + ((tick - tempos[i].tick) * tempos[i].us) / div / 1e6;
+  };
+  const sig = sigs[0] || { num: 4, den: 4 };
+  const barTicks = (div * 4 * sig.num) / sig.den;
+  const bars = [];
+  for (let t = 0; t <= lastTick && bars.length < 2000; t += barTicks) bars.push(sec(t));
+  const tracks = raw.map((t, i) => ({
+    name: t.name || `Track ${i + 1}`,
+    notes: t.notes.filter((n) => n.ch !== 9) // channel 10 is drums
+      .map((n) => ({ t: sec(n.s), d: Math.max(0.05, sec(n.e) - sec(n.s)), m: n.m }))
+      .sort((a, b) => a.t - b.t),
+  })).filter((t) => t.notes.length);
+  const title = raw.find((t) => t.name)?.name || '';
+  return { title, tracks, bars };
+}
+
+// Keep the top note wherever several start together, then make it one-note-at-a-time
+function melodyOf(notes) {
+  const out = [];
+  [...notes].sort((a, b) => a.t - b.t || b.m - a.m).forEach((n) => {
+    const last = out[out.length - 1];
+    if (last && n.t - last.t < 0.03) { if (n.m > last.m) { last.m = n.m; last.d = n.d; } return; }
+    out.push({ ...n });
+  });
+  for (let i = 0; i < out.length - 1; i++) out[i].d = Math.max(0.05, Math.min(out[i].d, out[i + 1].t - out[i].t));
+  return out;
+}
+
+// Pick the C-to-C two-octave window that fits the most notes, fold the rest in by octaves,
+// and group notes that start together into steps.
+function buildSong(meta, notes, bars) {
+  const ms = notes.map((n) => n.m);
+  const min = Math.min(...ms), max = Math.max(...ms), mid = (min + max) / 2;
+  let best = null;
+  for (let lo = 12 * Math.floor(min / 12) - 12; lo <= 12 * Math.floor(min / 12) + 12; lo += 12) {
+    if (lo < 24 || lo > 84) continue;
+    const out = ms.filter((m) => m < lo || m > lo + 24).length;
+    const off = Math.abs(lo + 12 - mid);
+    if (!best || out < best.out || (out === best.out && off < best.off)) best = { lo, out, off };
+  }
+  const lo = best.lo;
+  const fitted = notes.map((n) => {
+    let m = n.m;
+    while (m < lo) m += 12;
+    while (m > lo + 24) m -= 12;
+    return { t: n.t, d: n.d, m, tone: { color: BLACK.has(m % 12) ? '#ff2bd6' : '#00e5ff', name: SHARP[m % 12], iv: '' } };
+  }).sort((a, b) => a.t - b.t || a.m - b.m);
+  const steps = [];
+  fitted.forEach((n) => {
+    const st = steps[steps.length - 1];
+    if (st && n.t - st.t < 0.03) { if (!st.notes.some((x) => x.m === n.m)) st.notes.push(n); }
+    else steps.push({ t: n.t, notes: [n], hit: new Set() });
+  });
+  const end = Math.max(...fitted.map((n) => n.t + n.d));
+  return { ...meta, lo, notes: fitted, steps, bars: bars || [], end };
+}
+
+/* ======================= Songs: library ======================= */
+const MY_SONGS_KEY = 'pianobox.mysongs.v1';
+const LEVELS = { 1: 'Beginner', 2: 'Easy', 3: 'Intermediate', mine: 'My song' };
+function loadMySongs() {
+  try { return JSON.parse(localStorage.getItem(MY_SONGS_KEY) || '[]'); } catch (e) { return []; }
+}
+function saveMySongs(list) {
+  try { localStorage.setItem(MY_SONGS_KEY, JSON.stringify(list)); return true; } catch (e) { return false; }
+}
+function allSongs() {
+  const built = (window.PIANOBOX_SONGS || []).map((s) => ({ ...s, builtIn: true }));
+  return built.concat(loadMySongs().map((s) => ({ ...s, level: 'mine' })));
+}
+function songFromEntry(e) {
+  if (e.builtIn) { const { notes, bars } = parseNotation(e); return buildSong(e, notes, bars); }
+  return buildSong(e, e.notes.map(([t, d, m]) => ({ t, d, m })), e.bars);
+}
+
+/* ======================= Songs: player ======================= */
+const fmtTime = (s) => { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+const LEAD_IN = 1.5;
+
+const Song = {
+  cur: null, pos: 0, idx: 0, playing: false, waiting: false, finished: false,
+  mode: 'wait', speed: 1, loopA: null, loopB: null, misses: 0, score: null, last: 0,
+
+  load(entry) {
+    this.pause();
+    this.cur = songFromEntry(entry);
+    this.loopA = this.loopB = null;
+    syncKeyboard();
+    this.restart();
+    renderSongCtl();
+    lanesDirty = true;
+  },
+
+  ensure() {
+    if (!this.cur) this.load(allSongs().find((s) => s.id === 'ode') || allSongs()[0]);
+  },
+
+  // Jump to song time t; every step from there on is un-played again
+  seek(t, stepFrom = t) {
+    const s = this.cur;
+    if (!s) return;
+    this.pos = t;
+    this.idx = s.steps.findIndex((st) => st.t >= stepFrom - 1e-3);
+    if (this.idx < 0) this.idx = s.steps.length;
+    s.steps.forEach((st, i) => {
+      st.done = i < this.idx; st.missed = false; st.clean = undefined; st.hit.clear();
+    });
+    this.waiting = false;
+    this.finished = false;
+    this.score = null;
+    renderKeys(); renderDisplay(); renderSongCtl();
+  },
+
+  restart() {
+    const s = this.cur;
+    if (!s) return;
+    this.misses = 0;
+    const from = this.loopA != null ? this.loopA : s.steps[0].t;
+    this.seek(from - LEAD_IN, from);
+  },
+
+  play() {
+    if (!this.cur) return;
+    AudioEng.unlock();
+    if (this.finished) this.restart();
+    this.playing = true;
+    this.last = performance.now();
+    renderSongCtl();
+  },
+  pause() { this.playing = false; renderSongCtl(); },
+  toggle() { this.playing ? this.pause() : this.play(); },
+
+  setLoopA() {
+    const s = this.cur; if (!s) return;
+    const st = s.steps[this.idx] || s.steps[s.steps.length - 1];
+    this.loopA = st.t;
+    if (this.loopB != null && this.loopB <= this.loopA) this.loopB = null;
+    renderSongCtl();
+  },
+  setLoopB() {
+    const s = this.cur; if (!s) return;
+    const t = Math.max(this.pos, (s.steps[this.idx - 1] || s.steps[0]).t + 0.05);
+    if (this.loopA == null) this.loopA = s.steps[0].t;
+    if (t > this.loopA + 0.2) this.loopB = t;
+    renderSongCtl();
+  },
+  clearLoop() { this.loopA = this.loopB = null; renderSongCtl(); },
+  setLoop(a, b) {
+    const s = this.cur; if (!s) return;
+    const first = s.steps.find((st) => st.t >= a - 0.05);
+    if (!first || b - first.t < 0.2) return;
+    this.loopA = first.t; this.loopB = b;
+    this.restart();
+  },
+  loopOn() { return this.loopA != null && this.loopB != null; },
+
+  // Called for every key you press while in Songs mode
+  press(m, src) {
+    const s = this.cur;
+    if (!s || this.mode === 'listen') { flash(m, true, RAINBOW[m % 12]); return; }
+    const st = s.steps[this.idx];
+    if (!st || (this.mode === 'play' && this.pos < st.t - 0.6)) { flash(m, false); this.misses++; renderDisplay(); return; }
+    const n = st.notes.find((x) => !st.hit.has(x) && (x.m === m || (src === 'midi' && x.m % 12 === m % 12)));
+    if (!n) { flash(m, false); this.misses++; st.clean = false; renderDisplay(); return; }
+    st.hit.add(n);
+    flash(m, true, n.tone.color);
+    if (st.hit.size < st.notes.length) return;
+    st.done = true;
+    if (st.clean !== false) st.clean = true;
+    this.idx++;
+    this.waiting = false;
+    if (this.pos < st.t) this.pos = st.t; // played early: catch the roll up to you
+    this.afterStep();
+  },
+
+  afterStep() {
+    const s = this.cur;
+    if (this.loopOn() && (s.steps[this.idx]?.t ?? Infinity) >= this.loopB && !this.playing) { this.seek(this.loopA - 0.75, this.loopA); return; }
+    if (this.idx >= s.steps.length && !this.playing) this.finish();
+    renderKeys(); renderDisplay();
+  },
+
+  finish() {
+    const s = this.cur;
+    this.playing = false;
+    this.finished = true;
+    if (this.mode !== 'listen') {
+      const clean = s.steps.filter((st) => st.clean).length;
+      this.score = Math.round((clean / s.steps.length) * 100);
+    }
+    kbd.classList.remove('win'); void kbd.offsetWidth; kbd.classList.add('win');
+    setTimeout(() => kbd.classList.remove('win'), 850);
+    Object.values(keyEls).forEach((el, i) => setTimeout(() => ripple(el, RAINBOW[i % 12]), i * 25));
+    renderKeys(); renderDisplay(); renderSongCtl();
+  },
+
+  tick(now) {
+    const dt = Math.min(0.1, (now - this.last) / 1000) * this.speed;
+    this.last = now;
+    const s = this.cur;
+    if (!s || !this.playing) return;
+    let changed = false;
+    if (this.mode === 'wait') {
+      const st = s.steps[this.idx];
+      const np = this.pos + dt;
+      if (st && np >= st.t) { this.pos = st.t; if (!this.waiting) { this.waiting = true; changed = true; } }
+      else this.pos = np;
+    } else this.pos += dt;
+    let st;
+    if (this.mode === 'listen') {
+      while ((st = s.steps[this.idx]) && st.t <= this.pos) {
+        st.notes.forEach((n) => songNote(n, n.d / this.speed));
+        st.done = true; this.idx++; changed = true;
+      }
+    } else if (this.mode === 'play') {
+      while ((st = s.steps[this.idx]) && this.pos > st.t + 0.35) { st.missed = true; this.idx++; changed = true; }
+    }
+    if (this.loopOn() && this.pos >= this.loopB) { this.seek(this.loopA - 0.75, this.loopA); return; }
+    if (this.idx >= s.steps.length && this.pos >= s.end + 0.4) { this.finish(); return; }
+    if (changed) { renderKeys(); renderDisplay(); }
+  },
+
+  status() {
+    const s = this.cur;
+    if (!s) return 'Pick a song';
+    if (this.finished) return this.score != null ? `<b class="good">✓ Song complete · ${this.score}% clean</b>` : '<b class="good">✓ Done</b>';
+    const n = s.steps.length, i = Math.min(this.idx + 1, n);
+    if (this.mode === 'listen') return this.playing ? `Listening · ${i}/${n}` : 'Press Play to hear it';
+    const st = s.steps[this.idx];
+    const want = st ? st.notes.map((x) => x.tone.name).join(' + ') : '';
+    if (this.mode === 'wait') return this.playing || this.idx > 0 ? `Play ${want} · ${i}/${n}` : 'Play the glowing key';
+    return this.playing ? `${i}/${n}` : 'Press Play, then keep up';
+  },
+};
+
+function songNote(n, dur) {
+  AudioEng.noteOn(n.m, 0.75);
+  const el = keyEls[n.m];
+  el?.classList.add('down');
+  flash(n.m, true, n.tone.color);
+  setTimeout(() => { if (!held.has(n.m)) { AudioEng.noteOff(n.m); el?.classList.remove('down'); } }, Math.max(120, dur * 1000));
+}
+
+/* ======================= Songs: piano roll ======================= */
+const roll = $('#roll');
+const rctx = roll.getContext('2d');
+let lanes = {}, lanesDirty = true;
+
+function measureLanes() {
+  const r = roll.getBoundingClientRect();
+  lanes = {};
+  for (const [m, el] of Object.entries(keyEls)) {
+    const k = el.getBoundingClientRect();
+    lanes[m] = { x: k.left - r.left, w: k.width, black: el.classList.contains('black') };
+  }
+  lanesDirty = false;
+}
+
+function rr(x, y, w, h, rad) {
+  rad = Math.min(rad, w / 2, h / 2);
+  rctx.beginPath();
+  rctx.moveTo(x + rad, y);
+  rctx.arcTo(x + w, y, x + w, y + h, rad);
+  rctx.arcTo(x + w, y + h, x, y + h, rad);
+  rctx.arcTo(x, y + h, x, y, rad);
+  rctx.arcTo(x, y, x + w, y, rad);
+  rctx.closePath();
+}
+
+function drawRoll(now) {
+  const dpr = window.devicePixelRatio || 1;
+  const W = roll.clientWidth, H = roll.clientHeight;
+  if (!W || !H) return;
+  if (roll.width !== Math.round(W * dpr) || roll.height !== Math.round(H * dpr)) {
+    roll.width = Math.round(W * dpr); roll.height = Math.round(H * dpr); lanesDirty = true;
+  }
+  if (lanesDirty) measureLanes();
+  const c = rctx;
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, W, H);
+  // lanes
+  for (const L of Object.values(lanes)) {
+    if (L.black) { c.fillStyle = 'rgba(0,0,0,.35)'; c.fillRect(L.x, 0, L.w, H); }
+    else { c.fillStyle = 'rgba(255,255,255,.035)'; c.fillRect(L.x + L.w - 1, 0, 1, H); }
+  }
+  const s = Song.cur;
+  if (!s) return;
+  const pps = H / 3; // three seconds of song visible
+  const y = (t) => H - (t - Song.pos) * pps;
+  // bar lines and loop region
+  c.fillStyle = 'rgba(122,92,255,.18)';
+  for (const b of s.bars) { const by = y(b); if (by >= 0 && by <= H) c.fillRect(0, by, W, 1); }
+  if (Song.loopOn()) {
+    const ya = y(Song.loopA), yb = y(Song.loopB);
+    c.fillStyle = 'rgba(255,43,214,.07)';
+    c.fillRect(0, Math.max(0, yb), W, Math.min(H, ya) - Math.max(0, yb));
+    c.fillStyle = 'rgba(255,43,214,.6)';
+    if (ya >= 0 && ya <= H) c.fillRect(0, ya, W, 2);
+    if (yb >= 0 && yb <= H) c.fillRect(0, yb, W, 2);
+  }
+  const cur = s.steps[Song.idx];
+  const pulse = 0.6 + 0.4 * Math.sin(now / 160);
+  // white-key notes first so black-key notes sit on top
+  for (const pass of [false, true]) {
+    for (const st of s.steps) {
+      const top = y(st.t + 2);
+      if (top > H) break;
+      for (const n of st.notes) {
+        const L = lanes[n.m];
+        if (!L || L.black !== pass) continue;
+        const y1 = y(n.t), y0 = y(n.t + n.d);
+        if (y1 < 0 || y0 > H) continue;
+        const isCur = st === cur && !st.hit.has(n);
+        const pad = L.black ? 1 : 3;
+        let fill = n.tone.color, alpha = 0.85;
+        if (st.done) { fill = st.clean === false ? '#ff9500' : '#39ff14'; alpha = 0.35; }
+        else if (st.missed) { fill = '#ff2a3c'; alpha = 0.35; }
+        c.globalAlpha = alpha;
+        c.shadowColor = fill;
+        c.shadowBlur = isCur ? 22 * pulse : 8;
+        c.fillStyle = fill;
+        rr(L.x + pad, y0 + 1, L.w - pad * 2, Math.max(4, y1 - y0 - 2), 6);
+        c.fill();
+        c.shadowBlur = 0;
+        if (isCur) {
+          c.globalAlpha = 0.55 * pulse;
+          c.fillStyle = '#fff';
+          rr(L.x + pad + 3, y0 + 4, L.w - pad * 2 - 6, Math.max(2, y1 - y0 - 8), 4);
+          c.fill();
+        }
+        c.globalAlpha = 1;
+        if (y1 - y0 > 20 && L.w > 18 && !st.done) {
+          c.fillStyle = 'rgba(7,7,13,.85)';
+          c.font = `800 ${L.black ? 10 : 12}px -apple-system, system-ui, sans-serif`;
+          c.textAlign = 'center';
+          c.fillText(n.tone.name, L.x + L.w / 2, y1 - 7);
+        }
+      }
+    }
+  }
+  c.globalAlpha = 1;
+}
+
+function frame(now) {
+  if (S.mode === 'songs' && document.visibilityState === 'visible') {
+    Song.tick(now);
+    drawRoll(now);
+    updateTimeline();
+  } else Song.last = now;
+  requestAnimationFrame(frame);
+}
+
+/* ======================= Songs: controls ======================= */
+let lastTl = '';
+function updateTimeline() {
+  const s = Song.cur;
+  if (!s) return;
+  const frac = clamp(Song.pos / s.end, 0, 1);
+  const key = `${frac.toFixed(4)}|${Song.loopA}|${Song.loopB}`;
+  if (key === lastTl) return;
+  lastTl = key;
+  $('#tlFill').style.width = frac * 100 + '%';
+  $('#tlHead').style.left = frac * 100 + '%';
+  const lp = $('#tlLoop');
+  if (Song.loopOn()) {
+    lp.style.display = 'block';
+    lp.style.left = (Song.loopA / s.end) * 100 + '%';
+    lp.style.width = ((Song.loopB - Song.loopA) / s.end) * 100 + '%';
+  } else lp.style.display = 'none';
+  $('#songTime').textContent = `${fmtTime(Song.pos / Song.speed)} / ${fmtTime(s.end / Song.speed)}`;
+}
+
+function renderSongCtl() {
+  const s = Song.cur;
+  $('#songTitle').textContent = s ? s.title : 'Choose a song';
+  $('#songSub').textContent = s ? `${s.composer || ''}${s.composer ? ' · ' : ''}${LEVELS[s.level] || ''}` : '';
+  setSeg('#songModeSeg', Song.mode);
+  setSeg('#songSpeedSeg', Song.speed);
+  const pb = $('#songPlay');
+  pb.innerHTML = Song.playing ? '&#10073;&#10073; Pause' : '&#9654; Play';
+  pb.classList.toggle('playing', Song.playing);
+  $('#loopA').classList.toggle('on', Song.loopA != null);
+  $('#loopB').classList.toggle('on', Song.loopB != null);
+  lastTl = '';
+  updateTimeline();
+  if (S.mode === 'songs') renderDisplay();
+}
+
+function renderSongList() {
+  const q = $('#songSearch').value.trim().toLowerCase();
+  const f = $('#songFilter .on')?.dataset.v || 'all';
+  const list = allSongs().filter((s) =>
+    (f === 'all' || String(s.level) === f) &&
+    (!q || `${s.title} ${s.composer || ''}`.toLowerCase().includes(q)));
+  $('#songList').innerHTML = list.length ? list.map((s) => `
+    <div class="song-row${Song.cur && Song.cur.id === s.id ? ' on' : ''}">
+      <button class="song-pick" data-id="${s.id}">
+        <span class="st">${esc(s.title)}</span>
+        <span class="sc">${esc(s.composer || '')}</span>
+      </button>
+      <span class="lvl lvl-${s.level}">${LEVELS[s.level]}</span>
+      ${s.builtIn ? '' : `<button class="song-del" data-id="${s.id}" aria-label="Delete ${esc(s.title)}">&#10005;</button>`}
+    </div>`).join('')
+    : `<p class="muted">${f === 'mine' ? 'No imported songs yet. Tap <b>Import MIDI</b> to add one.' : 'No songs match that search.'}</p>`;
+}
+const esc = (t) => String(t).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+
+// Import flow: read the file, let the user pick which part is the melody, save it
+let pendingImport = null;
+function importMidi(file) {
+  const box = $('#importPanel');
+  file.arrayBuffer().then((buf) => {
+    const mid = parseMidiFile(buf);
+    if (!mid.tracks.length) throw new Error('No playable notes were found in that file.');
+    const base = file.name.replace(/\.(mid|midi)$/i, '');
+    pendingImport = { mid, title: base || mid.title || 'My song' };
+    const avg = (t) => t.notes.reduce((a, n) => a + n.m, 0) / t.notes.length;
+    // Melody guess: the highest-pitched part, ignoring tiny tracks when there are real ones
+    const big = mid.tracks.some((t) => t.notes.length >= 8);
+    const best = mid.tracks.reduce((b, t, i) => ((!big || t.notes.length >= 8) && (b < 0 || avg(t) > avg(mid.tracks[b])) ? i : b), -1);
+    const opts = mid.tracks.map((t, i) => `<option value="${i}"${i === Math.max(0, best) ? ' selected' : ''}>${esc(t.name)} · ${t.notes.length} notes</option>`);
+    if (mid.tracks.length > 1) opts.push('<option value="all">All parts (top notes)</option>');
+    box.innerHTML = `
+      <div class="imp-row"><label>Title</label><input id="impTitle" type="text" maxlength="80" value="${esc(pendingImport.title)}"></div>
+      <div class="imp-row"><label>Melody from</label><select id="impTrack">${opts.join('')}</select></div>
+      <div class="imp-row imp-btns"><button class="tbtn" id="impCancel">Cancel</button><button class="tbtn primary" id="impAdd">Add to my songs</button></div>`;
+    box.hidden = false;
+  }).catch((e) => {
+    box.innerHTML = `<p class="imp-err">${esc(e.message || 'Couldn’t read that file.')}</p>`;
+    box.hidden = false;
+  });
+}
+
+function addImported() {
+  const { mid } = pendingImport;
+  const sel = $('#impTrack').value;
+  const src = sel === 'all' ? mid.tracks.flatMap((t) => t.notes) : mid.tracks[+sel].notes;
+  const mel = melodyOf(src);
+  if (!mel.length) return;
+  const t0 = mel[0].t;
+  const r3 = (x) => Math.round(x * 1000) / 1000;
+  const entry = {
+    id: 'mine-' + Date.now().toString(36),
+    title: $('#impTitle').value.trim() || pendingImport.title,
+    composer: 'Imported MIDI',
+    notes: mel.map((n) => [r3(n.t - t0), r3(n.d), n.m]),
+    bars: mid.bars.map((b) => r3(b - t0)).filter((b) => b >= 0),
+  };
+  const mine = loadMySongs();
+  mine.push(entry);
+  if (!saveMySongs(mine)) { $('#importPanel').innerHTML = '<p class="imp-err">Not enough storage space to save that song on this device.</p>'; return; }
+  pendingImport = null;
+  $('#importPanel').hidden = true;
+  Song.load({ ...entry, level: 'mine' });
+  $('#songSheet').hidden = true;
+}
+
+function buildSongs() {
+  const sheet = $('#songSheet');
+  const open = () => { Song.pause(); renderSongList(); sheet.hidden = false; };
+  $('#songPick').addEventListener('click', open);
+  $('#songClose').addEventListener('click', () => { sheet.hidden = true; });
+  sheet.addEventListener('click', (e) => { if (e.target === sheet) sheet.hidden = true; });
+  $('#songSearch').addEventListener('input', renderSongList);
+  $('#songFilter').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    setSeg('#songFilter', b.dataset.v); renderSongList();
+  });
+  setSeg('#songFilter', 'all');
+  $('#songList').addEventListener('click', (e) => {
+    const del = e.target.closest('.song-del');
+    if (del) {
+      saveMySongs(loadMySongs().filter((s) => s.id !== del.dataset.id));
+      renderSongList();
+      return;
+    }
+    const pick = e.target.closest('.song-pick');
+    if (!pick) return;
+    const entry = allSongs().find((s) => s.id === pick.dataset.id);
+    if (entry) { Song.load(entry); sheet.hidden = true; }
+  });
+  $('#midiFile').addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) importMidi(f);
+    e.target.value = '';
+  });
+  $('#importPanel').addEventListener('click', (e) => {
+    if (e.target.id === 'impAdd') addImported();
+    if (e.target.id === 'impCancel') { pendingImport = null; $('#importPanel').hidden = true; }
+  });
+
+  $('#songModeSeg').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    Song.mode = b.dataset.v; Song.pause(); Song.restart();
+  });
+  $('#songSpeedSeg').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    Song.speed = +b.dataset.v; renderSongCtl();
+  });
+  $('#songPlay').addEventListener('click', () => Song.toggle());
+  $('#songRestart').addEventListener('click', () => { Song.pause(); Song.restart(); });
+  $('#loopA').addEventListener('click', () => Song.setLoopA());
+  $('#loopB').addEventListener('click', () => Song.setLoopB());
+  $('#loopX').addEventListener('click', () => Song.clearLoop());
+
+  // Timeline: tap to jump there, drag across it to loop that section
+  const tl = $('#songTL');
+  let drag = null;
+  const tAt = (x) => { const r = tl.getBoundingClientRect(); return clamp((x - r.left) / r.width, 0, 1) * (Song.cur ? Song.cur.end : 0); };
+  tl.addEventListener('pointerdown', (e) => {
+    if (!Song.cur) return;
+    e.preventDefault();
+    try { tl.setPointerCapture(e.pointerId); } catch (_) {}
+    drag = { x: e.clientX, t: tAt(e.clientX) };
+  });
+  tl.addEventListener('pointermove', (e) => {
+    if (!drag || Math.abs(e.clientX - drag.x) < 8) return;
+    const a = Math.min(drag.t, tAt(e.clientX)), b = Math.max(drag.t, tAt(e.clientX));
+    Song.loopA = a; Song.loopB = b; drag.moved = true; lastTl = ''; updateTimeline();
+  });
+  const end = (e) => {
+    if (!drag) return;
+    if (drag.moved) Song.setLoop(Song.loopA, Song.loopB);
+    else {
+      const t = tAt(e.clientX);
+      const st = Song.cur.steps.find((x) => x.t >= t - 0.05);
+      const from = st ? st.t : Song.cur.end;
+      Song.seek(from - 0.75, from);
+    }
+    drag = null;
+  };
+  tl.addEventListener('pointerup', end);
+  tl.addEventListener('pointercancel', () => { drag = null; });
+
+  new ResizeObserver(() => { lanesDirty = true; }).observe($('#rollWrap'));
+  requestAnimationFrame(frame);
+}
+
 /* ======================= Touch / pointer input ======================= */
 function keyAt(x, y) {
   const el = document.elementFromPoint(x, y);
@@ -911,7 +1551,7 @@ window.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   if (k === 'arrowright') { setStep(S.step + 1); return; }
   if (k === 'arrowleft') { setStep(S.step - 1); return; }
-  if (k === ' ') { e.preventDefault(); if (!e.repeat) toggleDemo(); return; }
+  if (k === ' ') { e.preventDefault(); if (!e.repeat) (S.mode === 'songs' ? Song.toggle() : toggleDemo()); return; }
   if (e.repeat || !(k in KEYMAP) || kbDown.has(k)) return;
   AudioEng.unlock();
   hideSplash();
@@ -1051,6 +1691,14 @@ function renderSoundStatus() {
   document.querySelectorAll('.sstat').forEach((el) => { el.textContent = txt; });
 }
 
+// Rebuild the keys when the visible range changes (Songs mode picks its own two octaves)
+function syncKeyboard() {
+  if (range()[0] === builtLo) return;
+  releaseAll();
+  buildKeyboard();
+  if (!SOUNDS[S.sound].synth) Samples.load(S.sound);
+}
+
 function setSustain(on) {
   S.sustain = on;
   $('#sustainBtn').setAttribute('aria-pressed', String(on));
@@ -1063,6 +1711,8 @@ function refresh() {
   body.classList.remove('mode-free', 'mode-chords', 'mode-arp', 'src-single', 'src-prog');
   body.classList.add('mode-' + S.mode, 'src-' + S.source);
   body.classList.toggle('hidepanel', S.hidePanel);
+  if (S.mode === 'songs') Song.ensure(); else Song.pause();
+  syncKeyboard();
 
   if (S.source === 'single') {
     const [pc, l] = ROOTS[S.root];
@@ -1105,11 +1755,13 @@ function renderStrip() {
 function renderControls() {
   setSeg('#modeSeg', S.mode);
   setSeg('#srcSeg', S.source);
-  $('#demoBtn').style.visibility = S.mode === 'free' ? 'hidden' : '';
+  $('#demoBtn').style.visibility = S.mode === 'free' || S.mode === 'songs' ? 'hidden' : '';
+  $('#songCtl').classList.toggle('show', S.mode === 'songs');
   $('#freeCtl').classList.toggle('show', S.mode === 'free');
   renderAuto();
-  $('#singleCtl').classList.toggle('show', S.mode !== 'free' && S.source === 'single');
-  $('#progCtl').classList.toggle('show', S.mode !== 'free' && S.source === 'prog');
+  const guided = S.mode === 'chords' || S.mode === 'arp';
+  $('#singleCtl').classList.toggle('show', guided && S.source === 'single');
+  $('#progCtl').classList.toggle('show', guided && S.source === 'prog');
 
   // Arpeggio options live in the inversion row (single) or under the progression (prog)
   const arp = $('#arpCtl');
@@ -1155,6 +1807,7 @@ function renderControls() {
 
 function buildControls() {
   buildAuto();
+  buildSongs();
   $('#rootChips').innerHTML = ROOTS.map(([pc, l], i) => `<button class="chip" data-v="${i}">${spell(l, pc)}</button>`).join('');
   $('#qualChips').innerHTML = QUALS.map((q) => `<button class="chip" data-v="${q.id}">${q.chip}</button>`).join('');
   $('#invChips').innerHTML = ['Root', '1st', '2nd', '3rd'].map((n, i) => `<button class="chip" data-v="${i}">${n}</button>`).join('');
@@ -1185,7 +1838,7 @@ function buildControls() {
   bind('#spanChips', (v) => { S.arpSpan = +v; refresh(); });
   bind('#progStrip', (v, b) => setStep(+b.dataset.i));
   bind('#octSeg', (v) => {
-    releaseAll(); S.octave = +v; buildKeyboard(); refresh();
+    releaseAll(); S.octave = +v; refresh();
     if (!SOUNDS[S.sound].synth) Samples.load(S.sound);
   });
   bind('#labelSeg', (v) => { S.labels = v; refresh(); });
@@ -1250,7 +1903,7 @@ $('#splash').addEventListener('pointerdown', (e) => { e.preventDefault(); AudioE
 $('#rotateDismiss').addEventListener('click', () => document.body.classList.add('rotate-ok'));
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') { releaseAll(); AudioEng.allOff(); if (demoing) stopDemo(); }
+  if (document.visibilityState === 'hidden') { releaseAll(); AudioEng.allOff(); Song.pause(); if (demoing) stopDemo(); }
   else { if (AudioEng.ctx && AudioEng.ctx.state !== 'running') AudioEng.ctx.resume(); keepAwake(); }
 });
 window.addEventListener('blur', () => { releaseAll(); for (const m of kbDown.values()) AudioEng.noteOff(m); kbDown.clear(); });
