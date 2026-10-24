@@ -108,21 +108,20 @@ SAMPLED.forEach(([, items]) => items.forEach(([id, name, kind]) => { SOUNDS[id] 
 const RELEASE = { piano: 0.09, ring: 0.45, hold: 0.12 };
 
 /* ======================= State ======================= */
-// Practice state starts fresh on every launch; only the Settings preferences are remembered.
+// Practice state and the sound (Grand Piano) start fresh on every launch; the other Settings are remembered.
 const DEFAULTS = {
   mode: 'free', source: 'single', root: 0, quality: 'maj', inversion: 0,
   keyPc: 0, progId: 'pop', step: 0, arpPattern: 'up', arpSpan: 1,
-  sound: 'saw', volume: 0.8, octave: 3, labels: 'white', colorMode: 'tone',
+  sound: 'grand', volume: 0.8, octave: 3, labels: 'white', colorMode: 'tone',
   voicing: 'smooth', autoAdvance: true, tempo: 96, hidePanel: false, sustain: false,
 };
-const PREFS = ['sound', 'volume', 'octave', 'labels', 'colorMode', 'voicing', 'autoAdvance', 'tempo'];
+const PREFS = ['volume', 'octave', 'labels', 'colorMode', 'voicing', 'autoAdvance', 'tempo'];
 const STORE_KEY = 'pianobox.prefs.v2';
 let S = { ...DEFAULTS };
 try {
   const saved = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
   PREFS.forEach((k) => { if (k in saved) S[k] = saved[k]; });
 } catch (e) {}
-if (!SOUNDS[S.sound]) S.sound = 'saw';
 function save() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(Object.fromEntries(PREFS.map((k) => [k, S[k]])))); } catch (e) {}
 }
@@ -1137,6 +1136,4 @@ buildControls();
 buildKeyboard();
 refresh();
 if (!SOUNDS[S.sound].synth) Samples.load(S.sound);
-// Quietly pre-download (not decode) the on-screen Grand Piano notes so choosing it later is near-instant.
-if (S.sound !== 'grand') setTimeout(() => visibleGrid().forEach((m) => fetch(sampleUrl('grand', m), { mode: 'cors' }).catch(() => {})), 4000);
 })();

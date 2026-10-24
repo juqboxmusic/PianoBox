@@ -23,12 +23,12 @@ Over plain HTTP on your LAN, *Add to Home Screen* still works on iOS, but the ap
 
 ## Sounds
 
-- **Synth waveforms:** Sawtooth (default), Square, Triangle and Sine, generated live with Web Audio.
-- **Recorded instruments:** 31 instruments, loaded the first time you pick one (about 1–3 MB each). The service worker then saves them for offline use.
+- **Synth waveforms:** Sawtooth, Square, Triangle and Sine, generated live with Web Audio.
+- **Recorded instruments:** 31 instruments; the Grand Piano is the default on every launch, loaded the first time you pick one (about 1–3 MB each). The service worker then saves them for offline use.
   - Grand Piano: [Salamander Grand Piano](https://archive.org/details/SalamanderGrandPianoV3) by Alexander Holm (CC BY 3.0), via `tonejs.github.io`.
   - Everything else: [FluidR3 GM soundfont](https://github.com/gleitz/midi-js-soundfonts) by Frank Wen, rendered by Benjamin Gleitzman (CC BY 3.0), via `gleitz.github.io`.
 
-Only the Settings preferences (sound, volume, range, labels, colours, voicing, auto-advance, tempo) are remembered. Every launch starts in Free Play, with Single Chord selected and the Pop progression ready.
+Only the Settings preferences (volume, range, labels, colours, voicing, auto-advance, tempo) are remembered. Every launch starts in Free Play, with Single Chord selected and the Pop progression ready.
 
 ## Files
 
