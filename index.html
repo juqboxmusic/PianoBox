@@ -132,8 +132,9 @@
     <div class="sheet-head"><h2>Settings</h2><button id="sheetClose" class="ibtn" aria-label="Close">&#10005;</button></div>
     <div class="srow"><label>Sound</label><select id="soundSel"></select><span class="sstat muted"></span></div>
     <div class="srow"><label>Volume</label><input type="range" id="volRange" min="0" max="1" step="0.01"></div>
-    <div class="srow"><label>Keyboard range</label><div class="seg" id="octSeg">
-      <button data-v="2">C2–C4</button><button data-v="3">C3–C5</button><button data-v="4">C4–C6</button></div></div>
+    <div class="srow"><label>Keyboard size</label><div class="seg" id="sizeSeg">
+      <button data-v="1">1 octave</button><button data-v="2">2 octaves</button><button data-v="3">3 octaves</button></div></div>
+    <div class="srow"><label>Keyboard range</label><div class="seg" id="octSeg"></div></div>
     <div class="srow"><label>Key labels</label><div class="seg" id="labelSeg">
       <button data-v="off">Off</button><button data-v="c">C only</button><button data-v="white">White keys</button><button data-v="all">All keys</button></div></div>
     <div class="srow"><label>Guide colors</label><div class="seg" id="colorSeg">
@@ -162,7 +163,7 @@
     <div class="seg" id="songFilter"><button data-v="all">All</button><button data-v="1">Beginner</button><button data-v="2">Easy</button><button data-v="3">Intermediate</button><button data-v="mine">My songs</button></div>
     <div id="importPanel" class="import-panel" hidden></div>
     <div id="songList" class="song-list"></div>
-    <p class="muted small">Built-in songs are public-domain melodies. Imported MIDI files are read and stored only on this device. PianoBox picks out the melody (one note at a time) and fits it to the two-octave keyboard.</p>
+    <p class="muted small">Built-in songs are public-domain melodies. Imported MIDI files are read and stored only on this device. PianoBox picks out the melody (one note at a time) and fits it to the keyboard.</p>
   </div>
 </div>
 

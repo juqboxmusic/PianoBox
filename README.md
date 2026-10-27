@@ -1,6 +1,6 @@
 # PianoBox
 
-A two-octave touch piano that runs in the browser. It has neon chord and arpeggio guides and can be installed to an iPad or Android home screen.
+A touch piano (1, 2 or 3 octaves) that runs in the browser. It has neon chord and arpeggio guides and can be installed to an iPad or Android home screen.
 
 There's no build step: it's plain HTML, CSS and JS.
 
@@ -46,7 +46,7 @@ Pick a song (tap the song name), then follow the falling notes and the glowing k
   - Grand Piano: [Salamander Grand Piano](https://archive.org/details/SalamanderGrandPianoV3) by Alexander Holm (CC BY 3.0), via `tonejs.github.io`.
   - Everything else: [FluidR3 GM soundfont](https://github.com/gleitz/midi-js-soundfonts) by Frank Wen, rendered by Benjamin Gleitzman (CC BY 3.0), via `gleitz.github.io`.
 
-Only the Settings preferences (volume, range, labels, colours, voicing, auto-advance, tempo) are remembered. Every launch starts in Free Play, with Single Chord selected and the Pop progression ready.
+Only the Settings preferences (keyboard size, volume, range, labels, colours, voicing, auto-advance, tempo) are remembered. Every launch starts in Free Play, with Single Chord selected and the Pop progression ready.
 
 ## Files
 

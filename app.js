@@ -113,11 +113,11 @@ const RELEASE = { piano: 0.09, ring: 0.45, hold: 0.12 };
 const DEFAULTS = {
   mode: 'free', source: 'single', root: 0, quality: 'maj', inversion: 0,
   keyPc: 0, progId: 'pop', step: 0, arpPattern: 'updown', arpSpan: 1,
-  sound: 'grand', volume: 0.8, octave: 3, labels: 'all', colorMode: 'tone',
+  sound: 'grand', volume: 0.8, octave: 3, octaves: 2, labels: 'all', colorMode: 'tone',
   voicing: 'smooth', autoAdvance: true, tempo: 96, hidePanel: false, sustain: false,
   auto: false, autoKey: 0, autoMinor: false, autoSize: 3,
 };
-const PREFS = ['volume', 'octave', 'labels', 'colorMode', 'voicing', 'autoAdvance', 'tempo'];
+const PREFS = ['volume', 'octave', 'octaves', 'labels', 'colorMode', 'voicing', 'autoAdvance', 'tempo'];
 const STORE_KEY = 'pianobox.prefs.v3';
 let S = { ...DEFAULTS };
 try {
@@ -381,9 +381,12 @@ const AudioEng = {
 };
 
 /* ======================= Chords & voicings ======================= */
+const span = () => 12 * S.octaves;
+// Start octaves offered for each keyboard size (C3 = 48)
+const STARTS = { 1: [3, 4, 5], 2: [2, 3, 4], 3: [2, 3, 4] };
 function range() {
   const lo = S.mode === 'songs' && Song.cur ? Song.cur.lo : 12 * (S.octave + 1);
-  return [lo, lo + 24];
+  return [lo, lo + span()];
 }
 const byMidi = (a, b) => a.midi - b.midi;
 
@@ -430,7 +433,7 @@ const maxInv = (ch) => Math.min(ch.tones.length, 4) - 1;
 // Voice-leading: pick the inversion of each chord closest to the previous one
 function smoothVoicings(chords) {
   const [lo, hi] = range();
-  const center = lo + 11;
+  const center = lo + span() / 2 - 1;
   const mean = (a) => a.reduce((s, x) => s + x, 0) / a.length;
   let prev = null;
   return chords.map((ch) => {
@@ -459,8 +462,8 @@ function smoothVoicings(chords) {
 }
 
 function arpSeq(ch) {
-  const [, hi] = range();
-  const base = range()[0] + ch.rootPc;
+  const [lo, hi] = range();
+  const base = lo + ch.rootPc;
   const seen = new Set();
   const ts = ch.tones
     .map((t) => ({ ...t, semi: t.semi % 12 }))
@@ -469,7 +472,13 @@ function arpSeq(ch) {
   const asc = [];
   for (let o = 0; o < S.arpSpan; o++) ts.forEach((t) => asc.push({ midi: base + t.semi + 12 * o, t }));
   asc.push({ midi: base + 12 * S.arpSpan, t: ts[0] });
-  const a = asc.filter((x) => x.midi <= hi);
+  let a = asc.filter((x) => x.midi <= hi);
+  if (a.length < asc.length) {
+    // Root to root doesn't fit (small keyboard): use the chord tones that are on screen, lowest first
+    const on = [];
+    for (let m = lo; m <= hi; m++) { const t = ts.find((x) => (ch.rootPc + x.semi) % 12 === m % 12); if (t) on.push({ midi: m, t }); }
+    if (on.length > a.length) a = on.slice(0, asc.length);
+  }
   switch (S.arpPattern) {
     case 'down': return a.slice().reverse();
     case 'updown': return a.concat(a.slice(0, -1).reverse());
@@ -506,14 +515,15 @@ function detectChord(midis) {
 const kbd = $('#kbd');
 const BOFF = { 1: -0.12, 3: 0.12, 6: -0.16, 8: 0, 10: 0.16 };
 
-let builtLo = null;
+let builtRange = '';
 function buildKeyboard() {
   const [lo, hi] = range();
-  builtLo = lo;
+  builtRange = lo + '-' + hi;
   lanesDirty = true;
   kbd.innerHTML = '';
+  kbd.dataset.oct = S.octaves;
   keyEls = {};
-  const ww = 100 / 15;
+  const ww = 100 / (7 * S.octaves + 1);
   let wi = 0;
   for (let m = lo; m <= hi; m++) {
     const pc = m % 12;
@@ -1009,23 +1019,24 @@ function melodyOf(notes, { filter = 'top', floor = 0 } = {}) {
   return out;
 }
 
-// Pick the C-to-C two-octave window that fits the most notes, fold the rest in by octaves,
+// Pick the C-to-C window (the chosen keyboard size) that fits the most notes, fold the rest in by octaves,
 // and group notes that start together into steps.
 function buildSong(meta, notes, bars) {
   const ms = notes.map((n) => n.m);
   const min = Math.min(...ms), max = Math.max(...ms), mid = (min + max) / 2;
   let best = null;
-  for (let lo = 12 * Math.floor(min / 12) - 12; lo <= 12 * Math.floor(min / 12) + 12; lo += 12) {
-    if (lo < 24 || lo > 84) continue;
-    const out = ms.filter((m) => m < lo || m > lo + 24).length;
-    const off = Math.abs(lo + 12 - mid);
+  const w = span();
+  for (let lo = 12 * Math.floor(min / 12) - 24; lo <= 12 * Math.floor(min / 12) + 12; lo += 12) {
+    if (lo < 24 || lo + w > 108) continue;
+    const out = ms.filter((m) => m < lo || m > lo + w).length;
+    const off = Math.abs(lo + w / 2 - mid);
     if (!best || out < best.out || (out === best.out && off < best.off)) best = { lo, out, off };
   }
   const lo = best.lo;
   const fitted = notes.map((n) => {
     let m = n.m;
     while (m < lo) m += 12;
-    while (m > lo + 24) m -= 12;
+    while (m > lo + w) m -= 12;
     return { t: n.t, d: n.d, m, tone: { color: BLACK.has(m % 12) ? '#ff2bd6' : '#00e5ff', name: SHARP[m % 12], iv: '' } };
   }).sort((a, b) => a.t - b.t || a.m - b.m);
   const steps = [];
@@ -1066,6 +1077,7 @@ const Song = {
 
   load(entry) {
     this.pause();
+    this.entry = entry;
     this.cur = songFromEntry(entry);
     this.loopA = this.loopB = null;
     syncKeyboard();
@@ -1631,6 +1643,7 @@ window.addEventListener('keydown', (e) => {
   AudioEng.unlock();
   hideSplash();
   const m = range()[0] + KEYMAP[k];
+  if (m > range()[1]) return;
   kbDown.set(k, m);
   press(m, 'kbd');
 });
@@ -1766,9 +1779,10 @@ function renderSoundStatus() {
   document.querySelectorAll('.sstat').forEach((el) => { el.textContent = txt; });
 }
 
-// Rebuild the keys when the visible range changes (Songs mode picks its own two octaves)
+// Rebuild the keys when the visible range changes (Songs mode picks its own window)
 function syncKeyboard() {
-  if (range()[0] === builtLo) return;
+  const [lo, hi] = range();
+  if (lo + '-' + hi === builtRange) return;
   releaseAll();
   buildKeyboard();
   if (!SOUNDS[S.sound].synth) Samples.load(S.sound);
@@ -1783,7 +1797,7 @@ function setSustain(on) {
 function refresh() {
   clearTimeout(G.timer);
   const body = document.body;
-  body.classList.remove('mode-free', 'mode-chords', 'mode-arp', 'src-single', 'src-prog');
+  body.classList.remove('mode-free', 'mode-chords', 'mode-arp', 'mode-songs', 'src-single', 'src-prog');
   body.classList.add('mode-' + S.mode, 'src-' + S.source);
   body.classList.toggle('hidepanel', S.hidePanel);
   if (S.mode === 'songs') Song.ensure(); else Song.pause();
@@ -1868,7 +1882,9 @@ function renderControls() {
 
   $('#soundSel').value = $('#soundQuick').value = S.sound;
   renderSoundStatus();
+  $('#octSeg').innerHTML = STARTS[S.octaves].map((o) => `<button data-v="${o}">C${o}–C${o + S.octaves}</button>`).join('');
   setSeg('#octSeg', S.octave);
+  setSeg('#sizeSeg', S.octaves);
   setSeg('#labelSeg', S.labels);
   setSeg('#colorSeg', S.colorMode);
   setSeg('#voiceSeg', S.voicing);
@@ -1912,9 +1928,13 @@ function buildControls() {
   bind('#patChips', (v) => { S.arpPattern = v; refresh(); });
   bind('#spanChips', (v) => { S.arpSpan = +v; refresh(); });
   bind('#progStrip', (v, b) => setStep(+b.dataset.i));
-  bind('#octSeg', (v) => {
-    releaseAll(); S.octave = +v; refresh();
-    if (!SOUNDS[S.sound].synth) Samples.load(S.sound);
+  bind('#octSeg', (v) => { releaseAll(); S.octave = +v; refresh(); });
+  bind('#sizeSeg', (v) => {
+    releaseAll();
+    S.octaves = +v;
+    if (!STARTS[S.octaves].includes(S.octave)) S.octave = S.octaves === 1 ? 4 : 3;
+    if (Song.entry) Song.load(Song.entry); // re-fit the song to the new size
+    refresh();
   });
   bind('#labelSeg', (v) => { S.labels = v; refresh(); });
   bind('#colorSeg', (v) => { S.colorMode = v; refresh(); });
